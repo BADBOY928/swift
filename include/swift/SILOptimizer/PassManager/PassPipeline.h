@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -50,8 +50,11 @@ public:
   SILPassPipelinePlan(const SILPassPipelinePlan &) = default;
 
 // Each pass gets its own add-function.
-#define PASS(ID, NAME, DESCRIPTION)                                            \
-  void add##ID() { Kinds.push_back(PassKind::ID); }
+#define PASS(ID, TAG, NAME)                                                    \
+  void add##ID() {                                                             \
+    assert(!PipelineStages.empty() && "startPipeline before adding passes.");  \
+    Kinds.push_back(PassKind::ID);                                             \
+  }
 #include "swift/SILOptimizer/PassManager/Passes.def"
 
   void addPasses(ArrayRef<PassKind> PassKinds);
@@ -59,7 +62,7 @@ public:
 #define PASSPIPELINE(NAME, DESCRIPTION)                                        \
   static SILPassPipelinePlan get##NAME##PassPipeline();
 #define PASSPIPELINE_WITH_OPTIONS(NAME, DESCRIPTION)                           \
-  static SILPassPipelinePlan get##NAME##PassPipeline(SILOptions Options);
+  static SILPassPipelinePlan get##NAME##PassPipeline(const SILOptions &Options);
 #include "swift/SILOptimizer/PassManager/PassPipeline.def"
 
   static SILPassPipelinePlan getPassPipelineForKinds(ArrayRef<PassKind> Kinds);

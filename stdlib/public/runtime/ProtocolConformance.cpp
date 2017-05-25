@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -16,12 +16,15 @@
 
 #include "swift/Basic/LLVM.h"
 #include "swift/Basic/Lazy.h"
-#include "swift/Basic/Unreachable.h"
+#include "swift/Runtime/Casting.h"
 #include "swift/Runtime/Concurrent.h"
 #include "swift/Runtime/Metadata.h"
 #include "swift/Runtime/Mutex.h"
+#include "swift/Runtime/Unreachable.h"
 #include "ImageInspection.h"
 #include "Private.h"
+
+#include <vector>
 
 using namespace swift;
 
@@ -118,7 +121,7 @@ const {
     return nullptr;
   }
 
-  swift_unreachable("Unhandled TypeMetadataRecordKind in switch.");
+  swift_runtime_unreachable("Unhandled TypeMetadataRecordKind in switch.");
 }
 
 template<>
@@ -133,7 +136,8 @@ const {
     return getWitnessTableAccessor()(type);
   }
 
-  swift_unreachable("Unhandled ProtocolConformanceReferenceKind in switch.");
+  swift_runtime_unreachable(
+      "Unhandled ProtocolConformanceReferenceKind in switch.");
 }
 
 namespace {
@@ -372,7 +376,7 @@ recur:
     // For generic and resilient types, nondependent conformances
     // are keyed by the nominal type descriptor rather than the
     // metadata, so try that.
-    auto *description = type->getNominalTypeDescriptor().get();
+    const auto description = type->getNominalTypeDescriptor().get();
 
     // Hash and lookup the type-protocol pair in the cache.
     if (auto *Value = C.findCached(description, protocol)) {
@@ -419,7 +423,7 @@ bool isRelatedType(const Metadata *type, const void *candidate,
 
     // If the type is resilient or generic, see if there's a witness table
     // keyed off the nominal type descriptor.
-    auto *description = type->getNominalTypeDescriptor().get();
+    const auto description = type->getNominalTypeDescriptor().get();
     if (description == candidate && !candidateIsMetadata)
       return true;
 

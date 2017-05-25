@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -19,6 +19,7 @@
 #include "swift/AST/ASTVisitor.h"
 #include "swift/AST/ASTWalker.h"
 #include "swift/AST/Decl.h"
+#include "swift/AST/ParameterList.h"
 #include "swift/AST/TypeWalker.h"
 #include "swift/Basic/Defer.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -192,7 +193,9 @@ public:
 
     // If VD is a noescape decl, then the closure we're computing this for
     // must also be noescape.
-    if (VD->hasInterfaceType() &&
+    if (AFR.hasType() &&
+        !AFR.getType()->hasError() &&
+        VD->hasInterfaceType() &&
         VD->getInterfaceType()->is<AnyFunctionType>() &&
         VD->getInterfaceType()->castTo<AnyFunctionType>()->isNoEscape() &&
         !capture.isNoEscape() &&
@@ -580,8 +583,9 @@ public:
     
     // Assigning an object doesn't require type metadata.
     if (auto assignment = dyn_cast<AssignExpr>(E))
-      return !assignment->getSrc()->getType()
-        ->hasRetainablePointerRepresentation();
+      return assignment->getSrc()->getType() &&
+        !assignment->getSrc()->getType()
+            ->hasRetainablePointerRepresentation();
 
     return true;
   }

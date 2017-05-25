@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -20,8 +20,8 @@
 #include "llvm/Support/DataTypes.h"
 #include "swift/AST/ClangModuleLoader.h"
 #include "swift/AST/Identifier.h"
-#include "swift/AST/ProtocolConformance.h"
 #include "swift/AST/SearchPathOptions.h"
+#include "swift/AST/SubstitutionList.h"
 #include "swift/AST/Type.h"
 #include "swift/AST/TypeAlignments.h"
 #include "swift/Basic/LangOptions.h"
@@ -43,6 +43,7 @@
 namespace clang {
   class Decl;
   class MacroInfo;
+  class Module;
   class ObjCInterfaceDecl;
 }
 
@@ -57,24 +58,35 @@ namespace swift {
   class ExtensionDecl;
   class ForeignRepresentationInfo;
   class FuncDecl;
+  class GenericContext;
   class InFlightDiagnostic;
-  class LazyAbstractFunctionData;
+  class IterableDeclContext;
+  class LazyContextData;
+  class LazyGenericContextData;
   class LazyIterableDeclContextData;
+  class LazyMemberLoader;
   class LazyResolver;
   class PatternBindingDecl;
   class PatternBindingInitializer;
+  class SourceFile;
   class SourceLoc;
   class Type;
   class TypeVariableType;
   class TupleType;
   class FunctionType;
-  class ArchetypeBuilder;
+  class GenericSignatureBuilder;
   class ArchetypeType;
   class Identifier;
   class InheritedNameSet;
   class ModuleDecl;
   class ModuleLoader;
   class NominalTypeDecl;
+  class NormalProtocolConformance;
+  class InheritedProtocolConformance;
+  class SpecializedProtocolConformance;
+  enum class ProtocolConformanceState;
+  class Pattern;
+  enum PointerTypeKind : unsigned;
   class PrecedenceGroupDecl;
   class TupleTypeElt;
   class EnumElementDecl;
@@ -86,8 +98,12 @@ namespace swift {
   class DiagnosticEngine;
   class Substitution;
   class TypeCheckerDebugConsumer;
+  struct RawComment;
   class DocComment;
   class SILBoxType;
+  class TypeAliasDecl;
+  class VarDecl;
+  class UnifiedStatsReporter;
 
   enum class KnownProtocolKind : uint8_t;
 
@@ -225,6 +241,9 @@ public:
 
   /// Cache of remapped types (useful for diagnostics).
   llvm::StringMap<Type> RemappedTypes;
+
+  /// Optional table of counters to report, nullptr when not collecting.
+  UnifiedStatsReporter *Stats = nullptr;
 
 private:
   /// \brief The current generation number, which reflects the number of
@@ -392,6 +411,9 @@ public:
   /// Retrieve the declaration of the "pointee" property of a pointer type.
   VarDecl *getPointerPointeePropertyDecl(PointerTypeKind ptrKind) const;
 
+  /// Retrieve the type Swift.AnyObject.
+  CanType getAnyObjectType() const;
+
   /// Retrieve the type Swift.Never.
   CanType getNeverType() const;
 
@@ -403,6 +425,10 @@ public:
 
   /// Retrieve the declaration of Foundation.NSError.
   ClassDecl *getNSErrorDecl() const;
+  /// Retrieve the declaration of Foundation.NSNumber.
+  ClassDecl *getNSNumberDecl() const;
+  /// Retrieve the declaration of Foundation.NSValue.
+  ClassDecl *getNSValueDecl() const;
 
   // Declare accessors for the known declarations.
 #define FUNC_DECL(Name, Id) \
@@ -435,7 +461,14 @@ public:
 
   /// Retrieve the declaration of Swift.==(Int, Int) -> Bool.
   FuncDecl *getEqualIntDecl() const;
-  
+
+  /// Retrieve the declaration of Array.append(element:)
+  FuncDecl *getArrayAppendElementDecl() const;
+
+  /// Retrieve the declaration of
+  /// Array.reserveCapacityForAppend(newElementsCount: Int)
+  FuncDecl *getArrayReserveCapacityDecl() const;
+
   /// Retrieve the declaration of Swift._unimplementedInitializer.
   FuncDecl *getUnimplementedInitializerDecl(LazyResolver *resolver) const;
 
@@ -457,6 +490,11 @@ public:
   /// library or Cocoa framework types that is known to be bridged by another
   /// module's overlay, for layering or implementation detail reasons.
   bool isTypeBridgedInExternalModule(NominalTypeDecl *nominal) const;
+
+  /// True if the given type is an Objective-C class that serves as the bridged
+  /// object type for many Swift value types, meaning that the conversion from
+  /// an object to a value is a conditional cast.
+  bool isObjCClassWithMultipleSwiftBridgedTypes(Type t);
 
   /// Get the Objective-C type that a Swift type bridges to, if any.
   /// 
@@ -522,7 +560,7 @@ public:
   /// Adds a search path to SearchPathOpts, unless it is already present.
   ///
   /// Does any proper bookkeeping to keep all module loaders up to date as well.
-  void addSearchPath(StringRef searchPath, bool isFramework);
+  void addSearchPath(StringRef searchPath, bool isFramework, bool isSystem);
 
   /// \brief Adds a module loader to this AST context.
   ///
@@ -580,6 +618,13 @@ public:
   /// Does nothing in non-asserts (NDEBUG) builds.
   void verifyAllLoadedModules() const;
 
+  /// \brief Check whether the module with a given name can be imported without
+  /// importing it.
+  ///
+  /// Note that even if this check succeeds, errors may still occur if the
+  /// module is loaded in full.
+  bool canImportModule(std::pair<Identifier, SourceLoc> ModulePath);
+
   /// \returns a module with a given name that was already loaded.  If the
   /// module was not loaded, returns nullptr.
   ModuleDecl *getLoadedModule(
@@ -634,7 +679,6 @@ public:
   /// Produce a new normal conformance for a property behavior.
   NormalProtocolConformance *
   getBehaviorConformance(Type conformingType,
-                         Type conformingInterfaceType,
                          ProtocolDecl *protocol,
                          SourceLoc loc,
                          AbstractStorageDecl *storage,
@@ -660,19 +704,47 @@ public:
   std::vector<DelayedConformanceDiag>
   takeDelayedConformanceDiags(NormalProtocolConformance *conformance);
 
+  /// Add delayed missing witnesses for the given normal protocol conformance.
+  void addDelayedMissingWitnesses(NormalProtocolConformance *conformance,
+                                  ArrayRef<ValueDecl*> witnesses);
+
+  /// Retrieve the delayed missing witnesses for the given normal protocol
+  /// conformance.
+  std::vector<ValueDecl*>
+  takeDelayedMissingWitnesses(NormalProtocolConformance *conformance);
+
   /// \brief Produce a specialized conformance, which takes a generic
-  /// conformance and substitutes
+  /// conformance and substitutions written in terms of the generic
+  /// conformance's signature.
   ///
   /// \param type The type for which we are retrieving the conformance.
   ///
   /// \param generic The generic conformance.
   ///
   /// \param substitutions The set of substitutions required to produce the
-  /// specialized conformance from the generic conformance.
+  /// specialized conformance from the generic conformance. This list is
+  /// copied so passing a temporary is permitted.
   SpecializedProtocolConformance *
   getSpecializedConformance(Type type,
                             ProtocolConformance *generic,
-                            ArrayRef<Substitution> substitutions);
+                            SubstitutionList substitutions);
+
+  /// \brief Produce a specialized conformance, which takes a generic
+  /// conformance and substitutions written in terms of the generic
+  /// conformance's signature.
+  ///
+  /// \param type The type for which we are retrieving the conformance.
+  ///
+  /// \param generic The generic conformance.
+  ///
+  /// \param substitutions The set of substitutions required to produce the
+  /// specialized conformance from the generic conformance. The keys must
+  /// be generic parameters, not archetypes, so for example passing in
+  /// TypeBase::getContextSubstitutionMap() is OK.
+  SpecializedProtocolConformance *
+  getSpecializedConformance(Type type,
+                            ProtocolConformance *generic,
+                            const SubstitutionMap &substitutions);
 
   /// \brief Produce an inherited conformance, for subclasses of a type
   /// that already conforms to a protocol.
@@ -683,42 +755,24 @@ public:
   InheritedProtocolConformance *
   getInheritedConformance(Type type, ProtocolConformance *inherited);
 
-  /// \brief Create trivial substitutions for the given bound generic type.
-  Optional<ArrayRef<Substitution>>
-  createTrivialSubstitutions(BoundGenericType *BGT,
-                             DeclContext *gpContext) const;
-
   /// Record compiler-known protocol information in the AST.
   void recordKnownProtocols(ModuleDecl *Stdlib);
   
-  /// \brief Retrieve the substitutions for a bound generic type, if known.
-  Optional<ArrayRef<Substitution>>
-  getSubstitutions(TypeBase *type, DeclContext *gpContext) const;
-
   /// Get the lazy data for the given declaration.
   ///
   /// \param lazyLoader If non-null, the lazy loader to use when creating the
   /// lazy data. The pointer must either be null or be consistent
   /// across all calls for the same \p func.
-  LazyContextData *getOrCreateLazyContextData(const Decl *decl,
+  LazyContextData *getOrCreateLazyContextData(const DeclContext *decl,
                                               LazyMemberLoader *lazyLoader);
 
-  /// Get the lazy function data for the given generic type.
-  ///
-  /// \param lazyLoader If non-null, the lazy loader to use when creating the
-  /// generic type data. The pointer must either be null or be consistent
-  /// across all calls for the same \p type.
-  LazyGenericTypeData *getOrCreateLazyGenericTypeData(
-                                                  const GenericTypeDecl *type,
-                                                  LazyMemberLoader *lazyLoader);
-
-  /// Get the lazy function data for the given abstract function.
+  /// Get the lazy function data for the given generic context.
   ///
   /// \param lazyLoader If non-null, the lazy loader to use when creating the
   /// function data. The pointer must either be null or be consistent
   /// across all calls for the same \p func.
-  LazyAbstractFunctionData *getOrCreateLazyFunctionContextData(
-                                              const AbstractFunctionDecl *func,
+  LazyGenericContextData *getOrCreateLazyGenericContextData(
+                                              const GenericContext *dc,
                                               LazyMemberLoader *lazyLoader);
 
   /// Get the lazy iterable context for the given iterable declaration context.
@@ -784,15 +838,17 @@ public:
   /// not necessarily loaded.
   void getVisibleTopLevelClangModules(SmallVectorImpl<clang::Module*> &Modules) const;
 
-  /// Retrieve or create the stored archetype builder for the given
+  /// Retrieve or create the stored generic signature builder for the given
   /// canonical generic signature and module.
-  ArchetypeBuilder *getOrCreateArchetypeBuilder(CanGenericSignature sig,
+  GenericSignatureBuilder *getOrCreateGenericSignatureBuilder(CanGenericSignature sig,
                                                 ModuleDecl *mod);
 
   /// Retrieve or create the canonical generic environment of a canonical
-  /// archetype builder.
+  /// generic signature builder.
   GenericEnvironment *getOrCreateCanonicalGenericEnvironment(
-                                                     ArchetypeBuilder *builder);
+                                       GenericSignatureBuilder *builder,
+                                       GenericSignature *sig,
+                                       ModuleDecl &module);
 
   /// Retrieve the inherited name set for the given class.
   const InheritedNameSet *getAllPropertyNames(ClassDecl *classDecl,
@@ -819,12 +875,6 @@ private:
   void setBriefComment(const Decl *D, StringRef Comment);
 
   friend TypeBase;
-
-  /// \brief Set the substitutions for the given bound generic type.
-  void setSubstitutions(TypeBase *type,
-                        DeclContext *gpContext,
-                        ArrayRef<Substitution> Subs) const;
-
   friend ArchetypeType;
 
   /// Provide context-level uniquing for SIL lowered type layouts and boxes.

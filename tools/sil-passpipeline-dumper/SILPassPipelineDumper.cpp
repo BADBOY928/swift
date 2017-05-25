@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -30,7 +30,7 @@ static llvm::cl::opt<PassPipelineKind>
 #define PASSPIPELINE(NAME, DESCRIPTION)                                        \
   clEnumValN(PassPipelineKind::NAME, #NAME, DESCRIPTION),
 #include "swift/SILOptimizer/PassManager/PassPipeline.def"
-                                                        clEnumValEnd));
+                                                        clEnumValN(0, "", "")));
 
 namespace llvm {
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os, PassPipelineKind Kind) {

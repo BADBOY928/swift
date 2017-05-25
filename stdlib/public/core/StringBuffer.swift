@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -76,7 +76,7 @@ public struct _StringBuffer {
     _storage = _Storage(
       HeapBufferStorage.self,
       _StringBufferIVars(_elementWidth: elementWidth),
-      (capacity + capacityBump + divRound) >> divRound
+      (capacity + capacityBump + divRound) &>> divRound
     )
     // This conditional branch should fold away during code gen.
     if elementShift == 0 {
@@ -86,19 +86,16 @@ public struct _StringBuffer {
       start.bindMemory(to: UTF16.CodeUnit.self, capacity: initialSize)
     }
 
-    self.usedEnd = start + (initialSize << elementShift)
+    self.usedEnd = start + (initialSize &<< elementShift)
     _storage.value.capacityAndElementShift
-      = ((_storage._capacity() - capacityBump) << 1) + elementShift
+      = ((_storage._capacity() - capacityBump) &<< 1) + elementShift
   }
 
-  static func fromCodeUnits<Input, Encoding>(
+  static func fromCodeUnits<Input : Sequence, Encoding : _UnicodeEncoding>(
     _ input: Input, encoding: Encoding.Type, repairIllFormedSequences: Bool,
     minimumCapacity: Int = 0
   ) -> (_StringBuffer?, hadError: Bool)
-    where
-    Input : Collection, // Sequence?
-    Encoding : UnicodeCodec,
-    Input.Iterator.Element == Encoding.CodeUnit {
+    where Input.Element == Encoding.CodeUnit {
     // Determine how many UTF-16 code units we'll need
     let inputStream = input.makeIterator()
     guard let (utf16Count, isAscii) = UTF16.transcodedLength(
@@ -160,7 +157,7 @@ public struct _StringBuffer {
   }
 
   var usedCount: Int {
-    return (usedEnd - start) >> elementShift
+    return (usedEnd - start) &>> elementShift
   }
 
   /// A past-the-end pointer for this buffer's available storage.
@@ -170,7 +167,7 @@ public struct _StringBuffer {
 
   /// The number of elements that can be stored in this buffer.
   public var capacity: Int {
-    return _storage.value.byteCapacity >> elementShift
+    return _storage.value.byteCapacity &>> elementShift
   }
 
   /// 1 if the buffer stores UTF-16; 0 otherwise.
@@ -193,7 +190,7 @@ public struct _StringBuffer {
   ) -> Bool {
     // The substring to be grown could be pointing in the middle of this
     // _StringBuffer.
-    let offset = (r.lowerBound - UnsafeRawPointer(start)) >> elementShift
+    let offset = (r.lowerBound - UnsafeRawPointer(start)) &>> elementShift
     return cap + offset <= capacity
   }
 
@@ -217,13 +214,13 @@ public struct _StringBuffer {
     // _StringBuffer.  Adjust the size so that it covers the imaginary
     // substring from the start of the buffer to `oldUsedEnd`.
     newUsedCount
-      += (bounds.lowerBound - UnsafeRawPointer(start)) >> elementShift
+      += (bounds.lowerBound - UnsafeRawPointer(start)) &>> elementShift
 
     if _slowPath(newUsedCount > capacity) {
       return false
     }
 
-    let newUsedEnd = start + (newUsedCount << elementShift)
+    let newUsedEnd = start + (newUsedCount &<< elementShift)
 
     if _fastPath(self._storage.isUniquelyReferenced()) {
       usedEnd = newUsedEnd

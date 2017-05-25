@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -26,6 +26,7 @@ class Pattern;
 class TypeRepr;
 struct TypeLoc;
 class ParameterList;
+enum class AccessKind: unsigned char;
 
 enum class SemaReferenceKind : uint8_t {
   ModuleRef = 0,
@@ -35,6 +36,13 @@ enum class SemaReferenceKind : uint8_t {
   TypeRef,
   EnumElementRef,
   SubscriptRef,
+};
+
+struct ReferenceMetaData {
+  SemaReferenceKind Kind;
+  llvm::Optional<AccessKind> AccKind;
+  ReferenceMetaData(SemaReferenceKind Kind, llvm::Optional<AccessKind> AccKind) :
+    Kind(Kind), AccKind(AccKind) {}
 };
 
 /// \brief An abstract class used to traverse an AST.
@@ -190,8 +198,8 @@ public:
   virtual bool walkToTypeReprPost(TypeRepr *T) { return true; }
 
   /// This method configures whether the walker should explore into the generic
-  /// params in an AbstractFunctionDecl.
-  virtual bool shouldWalkIntoFunctionGenericParams() { return false; }
+  /// params in AbstractFunctionDecl and NominalTypeDecl.
+  virtual bool shouldWalkIntoGenericParams() { return false; }
 
   /// walkToParameterListPre - This method is called when first visiting a
   /// ParameterList, before walking into its parameters.  If it returns false,

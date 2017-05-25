@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -20,7 +20,6 @@
 #include "swift/AST/ASTContext.h"
 #include "swift/AST/Decl.h"
 #include "swift/AST/ForeignErrorConvention.h"
-#include "swift/Basic/Fallthrough.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/DeclObjC.h"
@@ -53,9 +52,10 @@ TypeConverter::getIndicesAbstractionPattern(SubscriptDecl *decl) {
   CanGenericSignature genericSig;
   if (auto sig = decl->getGenericSignatureOfContext())
     genericSig = sig->getCanonicalSignature();
-  return AbstractionPattern(genericSig,
-                            decl->getIndicesInterfaceType()
-                                ->getCanonicalType());
+  auto indicesTy = decl->getIndicesInterfaceType();
+  auto indicesCanTy = indicesTy->getCanonicalType(genericSig,
+                                                  *decl->getParentModule());
+  return AbstractionPattern(genericSig, indicesCanTy);
 }
 
 static const clang::Type *getClangType(const clang::Decl *decl) {
@@ -91,7 +91,7 @@ AbstractionPattern TypeConverter::getAbstractionPattern(VarDecl *var) {
 }
 
 AbstractionPattern TypeConverter::getAbstractionPattern(EnumElementDecl *decl) {
-  assert(decl->hasArgumentType());
+  assert(decl->hasAssociatedValues());
   assert(!decl->hasClangNode());
 
   // This cannot be implemented correctly for Optional.Some.
@@ -303,7 +303,7 @@ AbstractionPattern::getTupleElementType(unsigned index) const {
       if (errorInfo.isErrorParameterReplacedWithVoid()) {
         if (paramIndex == errorParamIndex) {
           assert(isVoidLike(swiftEltType));
-          (void) isVoidLike;
+          (void)&isVoidLike;
           return AbstractionPattern(swiftEltType);
         }
       } else {
@@ -588,7 +588,7 @@ AbstractionPattern AbstractionPattern::dropLastTupleElement() const {
   llvm_unreachable("bad kind");  
 }
 
-AbstractionPattern AbstractionPattern::getLValueObjectType() const {
+AbstractionPattern AbstractionPattern::getLValueOrInOutObjectType() const {
   switch (getKind()) {
   case Kind::Invalid:
     llvm_unreachable("querying invalid abstraction pattern!");

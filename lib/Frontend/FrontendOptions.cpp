@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -28,6 +28,7 @@ bool FrontendOptions::actionHasOutput() const {
   case DumpScopeMaps:
   case DumpTypeRefinementContexts:
     return false;
+  case EmitPCH:
   case EmitSILGen:
   case EmitSIL:
   case EmitSIBGen:
@@ -41,6 +42,8 @@ bool FrontendOptions::actionHasOutput() const {
   case EmitIR:
   case EmitBC:
   case EmitObject:
+  case EmitImportedModules:
+  case EmitTBD:
     return true;
   }
   llvm_unreachable("Unknown ActionType");
@@ -57,6 +60,7 @@ bool FrontendOptions::actionIsImmediate() const {
   case PrintAST:
   case DumpScopeMaps:
   case DumpTypeRefinementContexts:
+  case EmitPCH:
   case EmitSILGen:
   case EmitSIL:
   case EmitSIBGen:
@@ -70,6 +74,8 @@ bool FrontendOptions::actionIsImmediate() const {
   case EmitIR:
   case EmitBC:
   case EmitObject:
+  case EmitImportedModules:
+  case EmitTBD:
     return false;
   }
   llvm_unreachable("Unknown ActionType");

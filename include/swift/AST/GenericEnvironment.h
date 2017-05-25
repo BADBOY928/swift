@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -20,13 +20,15 @@
 #include "swift/AST/SubstitutionMap.h"
 #include "swift/AST/GenericParamKey.h"
 #include "swift/AST/GenericSignature.h"
+#include "swift/Basic/Compiler.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TrailingObjects.h"
 #include <utility>
 
 namespace swift {
 
-class ArchetypeBuilder;
+class GenericSignatureBuilder;
 class ASTContext;
 class GenericTypeParamType;
 class SILModule;
@@ -39,7 +41,7 @@ class alignas(1 << DeclAlignInBits) GenericEnvironment final
                                         std::pair<ArchetypeType *,
                                                   GenericTypeParamType *>> {
   GenericSignature *Signature = nullptr;
-  ArchetypeBuilder *Builder = nullptr;
+  GenericSignatureBuilder *Builder = nullptr;
   DeclContext *OwningDC = nullptr;
 
   // The number of generic type parameter -> context type mappings we have
@@ -107,14 +109,12 @@ class alignas(1 << DeclAlignInBits) GenericEnvironment final
   }
 
   GenericEnvironment(GenericSignature *signature,
-                     ArchetypeBuilder *builder,
-                     TypeSubstitutionMap interfaceToArchetypeMap);
+                     GenericSignatureBuilder *builder);
 
   friend class ArchetypeType;
-  friend class ArchetypeBuilder;
+  friend class GenericSignatureBuilder;
   
-  ArchetypeBuilder *getArchetypeBuilder() const { return Builder; }
-  void clearArchetypeBuilder() { Builder = nullptr; }
+  GenericSignatureBuilder *getGenericSignatureBuilder() const { return Builder; }
 
   /// Query function suitable for use as a \c TypeSubstitutionFn that queries
   /// the mapping of interface types to archetypes.
@@ -155,15 +155,11 @@ public:
   /// primary archetype.
   bool containsPrimaryArchetype(ArchetypeType *archetype) const;
 
-  static
-  GenericEnvironment *get(GenericSignature *signature,
-                          TypeSubstitutionMap interfaceToArchetypeMap);
-
   /// Create a new, "incomplete" generic environment that will be populated
   /// by calls to \c addMapping().
   static
   GenericEnvironment *getIncomplete(GenericSignature *signature,
-                                    ArchetypeBuilder *builder);
+                                    GenericSignatureBuilder *builder);
 
   /// Set the owning declaration context for this generic environment.
   void setOwningDeclContext(DeclContext *owningDC);
@@ -188,7 +184,7 @@ public:
 
   /// Make vanilla new/delete illegal.
   void *operator new(size_t Bytes) = delete;
-  void operator delete(void *Data) = delete;
+  void operator delete(void *Data) SWIFT_DELETE_OPERATOR_DELETED;
 
   /// Only allow placement new.
   void *operator new(size_t Bytes, void *Mem) {
@@ -197,8 +193,7 @@ public:
   }
 
   /// Map an interface type to a contextual type.
-  static Type mapTypeIntoContext(ModuleDecl *M,
-                                 GenericEnvironment *genericEnv,
+  static Type mapTypeIntoContext(GenericEnvironment *genericEnv,
                                  Type type);
 
   /// Map a contextual type to an interface type.
@@ -209,7 +204,11 @@ public:
   Type mapTypeOutOfContext(Type type) const;
 
   /// Map an interface type to a contextual type.
-  Type mapTypeIntoContext(ModuleDecl *M, Type type) const;
+  Type mapTypeIntoContext(Type type) const;
+
+  /// Map an interface type to a contextual type.
+  Type mapTypeIntoContext(Type type,
+                          LookupConformanceFn lookupConformance) const;
 
   /// Map a generic parameter type to a contextual type.
   Type mapTypeIntoContext(GenericTypeParamType *type) const;
@@ -223,20 +222,19 @@ public:
   /// Get the sugared form of a generic parameter type.
   GenericTypeParamType *getSugaredType(GenericTypeParamType *type) const;
 
-  /// Derive a contextual type substitution map from a substitution array.
-  /// This is just like GenericSignature::getSubstitutionMap(), except
-  /// with contextual types instead of interface types.
+  /// Get the sugared form of a type by substituting any
+  /// generic parameter types by their sugared form.
+  Type getSugaredType(Type type) const;
+
+  /// Build a contextual type substitution map from a type substitution function
+  /// and conformance lookup function.
   SubstitutionMap
-  getSubstitutionMap(ModuleDecl *mod,
-                     ArrayRef<Substitution> subs) const;
+  getSubstitutionMap(TypeSubstitutionFn subs,
+                     LookupConformanceFn lookupConformance) const;
 
-  /// Same as above, but updates an existing map.
-  void
-  getSubstitutionMap(ModuleDecl *mod,
-                     ArrayRef<Substitution> subs,
-                     SubstitutionMap &subMap) const;
+  SubstitutionList getForwardingSubstitutions() const;
 
-  ArrayRef<Substitution> getForwardingSubstitutions() const;
+  void dump(raw_ostream &os) const;
 
   void dump() const;
 };

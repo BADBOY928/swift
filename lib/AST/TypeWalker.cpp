@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -94,6 +94,8 @@ class Traversal : public TypeVisitor<Traversal, bool>
         if (doIt(req.getSecondType()))
           return true;
         break;
+      case RequirementKind::Layout:
+        break;
       }
     }
 
@@ -104,7 +106,7 @@ class Traversal : public TypeVisitor<Traversal, bool>
     for (auto param : ty->getParameters())
       if (doIt(param.getType()))
         return true;
-    for (auto result : ty->getAllResults())
+    for (auto result : ty->getResults())
       if (doIt(result.getType()))
         return true;
     if (ty->hasErrorResult())
@@ -122,8 +124,8 @@ class Traversal : public TypeVisitor<Traversal, bool>
   }
 
   bool visitProtocolCompositionType(ProtocolCompositionType *ty) {
-    for (auto proto : ty->getProtocols())
-      if (doIt(proto))
+    for (auto member : ty->getMembers())
+      if (doIt(member))
         return true;
     return false;
   }
@@ -157,9 +159,7 @@ class Traversal : public TypeVisitor<Traversal, bool>
   bool visitTypeVariableType(TypeVariableType *ty) { return false; }
   
   bool visitSILBlockStorageType(SILBlockStorageType *ty) {
-    if (doIt(ty->getCaptureType()))
-      return true;
-    return false;
+    return doIt(ty->getCaptureType());
   }
 
   bool visitSILBoxType(SILBoxType *ty) {

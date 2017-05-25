@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -16,7 +16,6 @@
 
 #include "swift/Subsystems.h"
 #include "swift/AST/NameLookup.h"
-#include "swift/AST/AST.h"
 #include "swift/AST/DiagnosticsSema.h"
 #include "swift/AST/ASTWalker.h"
 #include "swift/AST/ModuleLoader.h"
@@ -36,7 +35,7 @@ using namespace swift;
 // NameBinder
 //===----------------------------------------------------------------------===//
 
-using ImportedModule = Module::ImportedModule;
+using ImportedModule = ModuleDecl::ImportedModule;
 using ImportOptions = SourceFile::ImportOptions;
 
 namespace {  
@@ -59,11 +58,11 @@ namespace {
     /// Load a module referenced by an import statement.
     ///
     /// Returns null if no module can be loaded.
-    Module *getModule(ArrayRef<std::pair<Identifier,SourceLoc>> ModuleID);
+    ModuleDecl *getModule(ArrayRef<std::pair<Identifier,SourceLoc>> ModuleID);
   };
 } // end anonymous namespace
 
-Module *
+ModuleDecl *
 NameBinder::getModule(ArrayRef<std::pair<Identifier, SourceLoc>> modulePath) {
   assert(!modulePath.empty());
   auto moduleID = modulePath[0];
@@ -167,7 +166,7 @@ void NameBinder::addImport(
     return;
   }
 
-  Module *M = getModule(ID->getModulePath());
+  ModuleDecl *M = getModule(ID->getModulePath());
   if (!M) {
     SmallString<64> modulePathStr;
     interleave(ID->getModulePath(),
@@ -191,7 +190,7 @@ void NameBinder::addImport(
 
   ID->setModule(M);
 
-  Module *topLevelModule;
+  ModuleDecl *topLevelModule;
   if (ID->getModulePath().size() == 1) {
     topLevelModule = M;
   } else {
@@ -327,7 +326,7 @@ void swift::performNameBinding(SourceFile &SF, unsigned StartElem) {
   // Do a prepass over the declarations to find and load the imported modules
   // and map operator decls.
   for (auto D : llvm::makeArrayRef(SF.Decls).slice(StartElem)) {
-    if (ImportDecl *ID = dyn_cast<ImportDecl>(D)) {
+    if (auto *ID = dyn_cast<ImportDecl>(D)) {
       Binder.addImport(ImportedModules, ID);
     } else if (auto *OD = dyn_cast<PrefixOperatorDecl>(D)) {
       insertOperatorDecl(Binder, SF.PrefixOperators, OD);

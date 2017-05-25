@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -13,6 +13,7 @@
 #define DEBUG_TYPE "arc-sequence-opts"
 #include "RefCountState.h"
 #include "RCStateTransition.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/Debug.h"
 
 using namespace swift;
@@ -289,7 +290,7 @@ handleRefCountInstMatch(SILInstruction *RefCountInst) {
   case LatticeState::MightBeUsed:
     // Unset InsertPt so we remove retain release pairs instead of
     // performing code motion.
-    SWIFT_FALLTHROUGH;
+    LLVM_FALLTHROUGH;
   case LatticeState::MightBeDecremented:
     return true;
   }

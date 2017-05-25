@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -160,6 +160,7 @@ namespace {
     bool simplifyBranchBlock(BranchInst *BI);
     bool simplifyCondBrBlock(CondBranchInst *BI);
     bool simplifyCheckedCastBranchBlock(CheckedCastBranchInst *CCBI);
+    bool simplifyCheckedCastValueBranchBlock(CheckedCastValueBranchInst *CCBI);
     bool simplifyCheckedCastAddrBranchBlock(CheckedCastAddrBranchInst *CCABI);
     bool simplifyTryApplyBlock(TryApplyInst *TAI);
     bool simplifySwitchValueBlock(SwitchValueInst *SVI);
@@ -396,7 +397,7 @@ static SILInstruction *createEnumElement(SILBuilder &Builder,
   auto EnumVal = SEI->getOperand();
   // Do we have a payload.
   auto EnumTy = EnumVal->getType();
-  if (EnumElement->hasArgumentType()) {
+  if (EnumElement->hasAssociatedValues()) {
     auto Ty = EnumTy.getEnumElementType(EnumElement, SEI->getModule());
     SILValue UED(Builder.createUncheckedEnumData(SEI->getLoc(), EnumVal,
                                                  EnumElement, Ty));
@@ -748,11 +749,9 @@ bool SimplifyCFG::simplifyAfterDroppingPredecessor(SILBasicBlock *BB) {
   return false;
 }
 
-/// Tries to figure out the enum case of an enum value \p Val which is used in
-/// block \p UsedInBB.
-static NullablePtr<EnumElementDecl> getEnumCase(SILValue Val,
-                                                SILBasicBlock *UsedInBB,
-                                                int RecursionDepth) {
+static NullablePtr<EnumElementDecl>
+getEnumCaseRecursive(SILValue Val, SILBasicBlock *UsedInBB, int RecursionDepth,
+                     llvm::SmallPtrSet<SILArgument *, 8> HandledArgs) {
   // Limit the number of recursions. This is an easy way to cope with cycles
   // in the SSA graph.
   if (RecursionDepth > 3)
@@ -783,13 +782,16 @@ static NullablePtr<EnumElementDecl> getEnumCase(SILValue Val,
   // In case of a block argument, recursively check the enum cases of all
   // incoming predecessors.
   if (auto *Arg = dyn_cast<SILArgument>(Val)) {
+    HandledArgs.insert(Arg);
     llvm::SmallVector<std::pair<SILBasicBlock *, SILValue>, 8> IncomingVals;
     if (!Arg->getIncomingValues(IncomingVals))
       return nullptr;
 
     EnumElementDecl *CommonCase = nullptr;
     for (std::pair<SILBasicBlock *, SILValue> Incoming : IncomingVals) {
-      TermInst *TI = Incoming.first->getTerminator();
+      SILBasicBlock *IncomingBlock = Incoming.first;
+      SILValue IncomingVal = Incoming.second;
+      TermInst *TI = IncomingBlock->getTerminator();
 
       // If the terminator of the incoming value is e.g. a switch_enum, the
       // incoming value is the switch_enum operand and not the enum payload
@@ -797,8 +799,13 @@ static NullablePtr<EnumElementDecl> getEnumCase(SILValue Val,
       if (!isa<BranchInst>(TI) && !isa<CondBranchInst>(TI))
         return nullptr;
 
+      auto *IncomingArg = dyn_cast<SILArgument>(IncomingVal);
+      if (IncomingArg && HandledArgs.count(IncomingArg) != 0)
+        continue;
+
       NullablePtr<EnumElementDecl> IncomingCase =
-        getEnumCase(Incoming.second, Incoming.first, RecursionDepth + 1);
+        getEnumCaseRecursive(Incoming.second, IncomingBlock, RecursionDepth + 1,
+                             HandledArgs);
       if (!IncomingCase)
         return nullptr;
       if (IncomingCase.get() != CommonCase) {
@@ -807,37 +814,80 @@ static NullablePtr<EnumElementDecl> getEnumCase(SILValue Val,
         CommonCase = IncomingCase.get();
       }
     }
-    assert(CommonCase);
     return CommonCase;
   }
   return nullptr;
 }
 
+/// Tries to figure out the enum case of an enum value \p Val which is used in
+/// block \p UsedInBB.
+static NullablePtr<EnumElementDecl> getEnumCase(SILValue Val,
+                                                SILBasicBlock *UsedInBB) {
+  llvm::SmallPtrSet<SILArgument *, 8> HandledArgs;
+  return getEnumCaseRecursive(Val, UsedInBB, /*RecursionDepth*/ 0, HandledArgs);
+}
+
+static int getThreadingCost(SILInstruction *I) {
+  if (!isa<DeallocStackInst>(I) && !I->isTriviallyDuplicatable())
+    return 1000;
+
+  // Don't jumpthread function calls.
+  if (isa<ApplyInst>(I))
+    return 1000;
+
+  // This is a really trivial cost model, which is only intended as a starting
+  // point.
+  if (instructionInlineCost(*I) != InlineCost::Free)
+    return 1;
+
+  return 0;
+}
+
 /// couldSimplifyUsers - Check to see if any simplifications are possible if
 /// "Val" is substituted for BBArg.  If so, return true, if nothing obvious
 /// is possible, return false.
-static bool couldSimplifyUsers(SILArgument *BBArg, BranchInst *BI,
-                              SILValue BIArg) {
-  // If the value being substituted is an enum, check to see if there are any
-  // switches on it.
-  if (!getEnumCase(BIArg, BI->getParent(), 0))
-    return false;
+static bool couldSimplifyEnumUsers(SILArgument *BBArg, int Budget) {
+  SILBasicBlock *BB = BBArg->getParent();
+  int BudgetForBranch = 100;
 
-  for (auto UI : BBArg->getUses()) {
+  for (Operand *UI : BBArg->getUses()) {
     auto *User = UI->getUser();
-    if (BBArg->getParent() == User->getParent()) {
-      // We only know we can simplify if the switch_enum user is in the block we
-      // are trying to jump thread.
-      // The value must not be define in the same basic block as the switch enum
-      // user. If this is the case we have a single block switch_enum loop.
-      if (isa<SwitchEnumInst>(User) || isa<SelectEnumInst>(User))
-        return true;
+    if (User->getParent() != BB)
+      continue;
 
-      // Also allow enum of enum, which usually can be combined to a single
-      // instruction. This helps to simplify the creation of an enum from an
-      // integer raw value.
-      if (isa<EnumInst>(User))
+    // We only know we can simplify if the switch_enum user is in the block we
+    // are trying to jump thread.
+    // The value must not be define in the same basic block as the switch enum
+    // user. If this is the case we have a single block switch_enum loop.
+    if (isa<SwitchEnumInst>(User) || isa<SelectEnumInst>(User))
+      return true;
+
+    // Also allow enum of enum, which usually can be combined to a single
+    // instruction. This helps to simplify the creation of an enum from an
+    // integer raw value.
+    if (isa<EnumInst>(User))
+      return true;
+
+    if (auto *SWI = dyn_cast<SwitchValueInst>(User)) {
+      if (SWI->getOperand() == BBArg)
         return true;
+    }
+
+    if (auto *BI = dyn_cast<BranchInst>(User)) {
+      if (BudgetForBranch > Budget) {
+        BudgetForBranch = Budget;
+        for (SILInstruction &I : *BB) {
+          BudgetForBranch -= getThreadingCost(&I);
+          if (BudgetForBranch < 0)
+            break;
+        }
+      }
+      if (BudgetForBranch > 0) {
+        SILBasicBlock *DestBB = BI->getDestBB();
+        unsigned OpIdx = UI->getOperandNumber();
+        if (couldSimplifyEnumUsers(DestBB->getArgument(OpIdx), BudgetForBranch))
+          return true;
+      }
     }
   }
   return false;
@@ -908,43 +958,41 @@ bool SimplifyCFG::tryJumpThreading(BranchInst *BI) {
   // major second order simplifications.  Here we only do it if there are
   // "constant" arguments to the branch or if we know how to fold something
   // given the duplication.
-  bool WantToThread = false;
+  int ThreadingBudget = 0;
 
-  if (isa<CondBranchInst>(DestBB->getTerminator()))
+  for (unsigned i = 0, e = BI->getArgs().size(); i != e; ++i) {
+    // If the value being substituted is an enum, check to see if there are any
+    // switches on it.
+    SILValue Arg = BI->getArg(i);
+    if (!getEnumCase(Arg, BI->getParent()) &&
+        !isa<IntegerLiteralInst>(Arg))
+      continue;
+
+    if (couldSimplifyEnumUsers(DestBB->getArgument(i), 8)) {
+      ThreadingBudget = 8;
+      break;
+    }
+  }
+
+  if (ThreadingBudget == 0 && isa<CondBranchInst>(DestBB->getTerminator())) {
     for (auto V : BI->getArgs()) {
       if (isa<IntegerLiteralInst>(V) || isa<FloatLiteralInst>(V)) {
-        WantToThread = true;
+        ThreadingBudget = 4;
         break;
       }
     }
-
-  if (!WantToThread) {
-    for (unsigned i = 0, e = BI->getArgs().size(); i != e; ++i)
-      if (couldSimplifyUsers(DestBB->getArgument(i), BI, BI->getArg(i))) {
-        WantToThread = true;
-        break;
-      }
   }
 
   // If we don't have anything that we can simplify, don't do it.
-  if (!WantToThread) return false;
+  if (ThreadingBudget == 0)
+    return false;
 
   // If it looks potentially interesting, decide whether we *can* do the
   // operation and whether the block is small enough to be worth duplicating.
-  unsigned Cost = 0;
-
   for (auto &Inst : *DestBB) {
-    if (!Inst.isTriviallyDuplicatable())
+    ThreadingBudget -= getThreadingCost(&Inst);
+    if (ThreadingBudget <= 0)
       return false;
-
-    // Don't jumpthread function calls.
-    if (isa<ApplyInst>(Inst))
-      return false;
-
-    // This is a really trivial cost model, which is only intended as a starting
-    // point.
-    if (instructionInlineCost(Inst) != InlineCost::Free)
-      if (++Cost == 4) return false;
 
     // We need to update ssa if a value is used outside the duplicated block.
     if (!NeedToUpdateSSA)
@@ -1025,7 +1073,7 @@ static SILBasicBlock *getTrampolineDest(SILBasicBlock *SBB) {
   if (!onlyHasTerminatorAndDebugInsts(SBB))
     return nullptr;
 
-  BranchInst *BI = dyn_cast<BranchInst>(SBB->getTerminator());
+  auto *BI = dyn_cast<BranchInst>(SBB->getTerminator());
   if (!BI)
     return nullptr;
 
@@ -1063,7 +1111,7 @@ static BranchInst *getTrampolineWithoutBBArgsTerminator(SILBasicBlock *SBB) {
   if (!onlyHasTerminatorAndDebugInsts(SBB))
     return nullptr;
 
-  BranchInst *BI = dyn_cast<BranchInst>(SBB->getTerminator());
+  auto *BI = dyn_cast<BranchInst>(SBB->getTerminator());
   if (!BI)
     return nullptr;
 
@@ -1295,7 +1343,7 @@ static SILValue invertExpectAndApplyTo(SILBuilder &Builder,
   if (BI->getIntrinsicInfo().ID != llvm::Intrinsic::expect)
     return V;
   auto Args = BI->getArguments();
-  IntegerLiteralInst *IL = dyn_cast<IntegerLiteralInst>(Args[1]);
+  auto *IL = dyn_cast<IntegerLiteralInst>(Args[1]);
   if (!IL)
     return V;
   SILValue NegatedExpectedValue = Builder.createIntegerLiteral(
@@ -1580,7 +1628,7 @@ bool SimplifyCFG::simplifySwitchEnumUnreachableBlocks(SwitchEnumInst *SEI) {
     return true;
   }
 
-  if (!Element || !Element->hasArgumentType() || Dest->args_empty()) {
+  if (!Element || !Element->hasAssociatedValues() || Dest->args_empty()) {
     assert(Dest->args_empty() && "Unexpected argument at destination!");
 
     SILBuilderWithScope(SEI).createBranch(SEI->getLoc(), Dest);
@@ -1616,7 +1664,7 @@ bool SimplifyCFG::simplifySwitchEnumUnreachableBlocks(SwitchEnumInst *SEI) {
 /// switch_enum instruction that gets its operand from an enum
 /// instruction.
 bool SimplifyCFG::simplifySwitchEnumBlock(SwitchEnumInst *SEI) {
-  auto EnumCase = getEnumCase(SEI->getOperand(), SEI->getParent(), 0);
+  auto EnumCase = getEnumCase(SEI->getOperand(), SEI->getParent());
   if (!EnumCase)
     return false;
 
@@ -1809,6 +1857,35 @@ bool SimplifyCFG::simplifyCheckedCastBranchBlock(CheckedCastBranchInst *CCBI) {
   return MadeChange;
 }
 
+bool SimplifyCFG::simplifyCheckedCastValueBranchBlock(
+    CheckedCastValueBranchInst *CCBI) {
+  auto SuccessBB = CCBI->getSuccessBB();
+  auto FailureBB = CCBI->getFailureBB();
+  auto ThisBB = CCBI->getParent();
+
+  bool MadeChange = false;
+  CastOptimizer CastOpt(
+      [&MadeChange](SILInstruction *I,
+                    ValueBase *V) { /* ReplaceInstUsesAction */
+                                    MadeChange = true;
+      },
+      [&MadeChange](SILInstruction *I) { /* EraseInstAction */
+                                         MadeChange = true;
+                                         I->eraseFromParent();
+      },
+      [&]() { /* WillSucceedAction */
+              MadeChange |= removeIfDead(FailureBB);
+              addToWorklist(ThisBB);
+      },
+      [&]() { /* WillFailAction */
+              MadeChange |= removeIfDead(SuccessBB);
+              addToWorklist(ThisBB);
+      });
+
+  MadeChange |= bool(CastOpt.simplifyCheckedCastValueBranchInst(CCBI));
+  return MadeChange;
+}
+
 bool
 SimplifyCFG::
 simplifyCheckedCastAddrBranchBlock(CheckedCastAddrBranchInst *CCABI) {
@@ -1865,38 +1942,20 @@ static bool isTryApplyOfConvertFunction(TryApplyInst *TAI,
   // Check if it is a conversion of a non-throwing function into
   // a throwing function. If this is the case, replace by a
   // simple apply.
-  auto OrigFnTy = dyn_cast<SILFunctionType>(CFI->getConverted()->getType().
-                                            getSwiftRValueType());
+  auto OrigFnTy = CFI->getConverted()->getType().getAs<SILFunctionType>();
   if (!OrigFnTy || OrigFnTy->hasErrorResult())
     return false;
   
-  auto TargetFnTy = dyn_cast<SILFunctionType>(CFI->getType().
-                                              getSwiftRValueType());
+  auto TargetFnTy = CFI->getType().getAs<SILFunctionType>();
   if (!TargetFnTy || !TargetFnTy->hasErrorResult())
     return false;
-
-  // Check if the converted function type has the same number of arguments.
-  // Currently this is always the case, but who knows what convert_function can
-  // do in the future?
-  unsigned numParams = OrigFnTy->getParameters().size();
-  if (TargetFnTy->getParameters().size() != numParams)
-    return false;
-
-  // Check that the argument types are matching.
-  for (unsigned Idx = 0; Idx < numParams; Idx++) {
-    if (!canCastValueToABICompatibleType(
-          TAI->getModule(),
-          OrigFnTy->getParameters()[Idx].getSILType(),
-          TargetFnTy->getParameters()[Idx].getSILType()))
-      return false;
-  }
 
   // Look through the conversions and find the real callee.
   Callee = getActualCallee(CFI->getConverted());
   CalleeType = Callee->getType();
   
   // If it a call of a throwing callee, bail.
-  auto CalleeFnTy = dyn_cast<SILFunctionType>(CalleeType.getSwiftRValueType());
+  auto CalleeFnTy = CalleeType.getAs<SILFunctionType>();
   if (!CalleeFnTy || CalleeFnTy->hasErrorResult())
     return false;
   
@@ -1930,65 +1989,43 @@ bool SimplifyCFG::simplifyTryApplyBlock(TryApplyInst *TAI) {
   if (isTryApplyOfConvertFunction(TAI, Callee, CalleeType) ||
       isTryApplyWithUnreachableError(TAI, Callee, CalleeType)) {
 
-    auto CalleeFnTy = cast<SILFunctionType>(CalleeType.getSwiftRValueType());
-
-    auto ResultTy = CalleeFnTy->getSILResult();
+    auto CalleeFnTy = CalleeType.castTo<SILFunctionType>();
+    SILFunctionConventions calleeConv(CalleeFnTy, TAI->getModule());
+    auto ResultTy = calleeConv.getSILResultType();
     auto OrigResultTy = TAI->getNormalBB()->getArgument(0)->getType();
-
-    // Bail if the cast between the actual and expected return types cannot
-    // be handled.
-    if (!canCastValueToABICompatibleType(TAI->getModule(),
-                                         ResultTy, OrigResultTy))
-      return false;
 
     SILBuilderWithScope Builder(TAI);
 
-    auto TargetFnTy = dyn_cast<SILFunctionType>(
-                        CalleeType.getSwiftRValueType());
+    auto TargetFnTy = CalleeFnTy;
     if (TargetFnTy->isPolymorphic()) {
       TargetFnTy = TargetFnTy->substGenericArgs(TAI->getModule(),
                                                 TAI->getSubstitutions());
     }
+    SILFunctionConventions targetConv(TargetFnTy, TAI->getModule());
 
-    auto OrigFnTy = dyn_cast<SILFunctionType>(
-        TAI->getCallee()->getType().getSwiftRValueType());
+    auto OrigFnTy = TAI->getCallee()->getType().getAs<SILFunctionType>();
     if (OrigFnTy->isPolymorphic()) {
       OrigFnTy = OrigFnTy->substGenericArgs(TAI->getModule(),
                                             TAI->getSubstitutions());
     }
-
-    unsigned numArgs = TAI->getNumArguments();
-
-    // First check if it is possible to convert all arguments.
-    // Currently we believe that castValueToABICompatibleType can handle all
-    // cases, so this check should never fail. We just do it to be absolutely
-    // sure that we don't crash.
-    for (unsigned i = 0; i < numArgs; ++i) {
-      if (!canCastValueToABICompatibleType(TAI->getModule(),
-                                           OrigFnTy->getSILArgumentType(i),
-                                           TargetFnTy->getSILArgumentType(i))) {
-        return false;
-      }
-    }
+    SILFunctionConventions origConv(OrigFnTy, TAI->getModule());
 
     SmallVector<SILValue, 8> Args;
+    unsigned numArgs = TAI->getNumArguments();
     for (unsigned i = 0; i < numArgs; ++i) {
       auto Arg = TAI->getArgument(i);
       // Cast argument if required.
       Arg = castValueToABICompatibleType(&Builder, TAI->getLoc(), Arg,
-                                         OrigFnTy->getSILArgumentType(i),
-                                         TargetFnTy->getSILArgumentType(i))
-        .getValue();
+                                         origConv.getSILArgumentType(i),
+                                         targetConv.getSILArgumentType(i));
       Args.push_back(Arg);
     }
 
-    assert (CalleeFnTy->getNumSILArguments() == Args.size() &&
-            "The number of arguments should match");
+    assert(calleeConv.getNumSILArguments() == Args.size()
+           && "The number of arguments should match");
 
     DEBUG(llvm::dbgs() << "replace with apply: " << *TAI);
     ApplyInst *NewAI = Builder.createApply(TAI->getLoc(), Callee,
-                                           CalleeType,
-                                           ResultTy,
                                            TAI->getSubstitutions(),
                                            Args, CalleeFnTy->hasErrorResult());
 
@@ -1996,8 +2033,7 @@ bool SimplifyCFG::simplifyTryApplyBlock(TryApplyInst *TAI) {
     auto *NormalBB = TAI->getNormalBB();
 
     auto CastedResult = castValueToABICompatibleType(&Builder, Loc, NewAI,
-                                                     ResultTy, OrigResultTy)
-                                                    .getValue();
+                                                     ResultTy, OrigResultTy);
 
     Builder.createBranch(Loc, NormalBB, { CastedResult });
     TAI->eraseFromParent();
@@ -2106,7 +2142,7 @@ static bool tryMoveCondFailToPreds(SILBasicBlock *BB) {
     return false;
   
   // Check if the condition is a single-used argument in the current block.
-  SILArgument *condArg = dyn_cast<SILArgument>(cond);
+  auto *condArg = dyn_cast<SILArgument>(cond);
   if (!condArg || !condArg->hasOneUse())
     return false;
   
@@ -2194,6 +2230,10 @@ bool SimplifyCFG::simplifyBlocks() {
     case TermKind::CheckedCastBranchInst:
       Changed |= simplifyCheckedCastBranchBlock(cast<CheckedCastBranchInst>(TI));
       break;
+    case TermKind::CheckedCastValueBranchInst:
+      Changed |= simplifyCheckedCastValueBranchBlock(
+          cast<CheckedCastValueBranchInst>(TI));
+      break;
     case TermKind::CheckedCastAddrBranchInst:
       Changed |= simplifyCheckedCastAddrBranchBlock(cast<CheckedCastAddrBranchInst>(TI));
       break;
@@ -2228,7 +2268,7 @@ bool SimplifyCFG::canonicalizeSwitchEnums() {
   for (auto &BB : Fn) {
     TermInst *TI = BB.getTerminator();
   
-    SwitchEnumInstBase *SWI = dyn_cast<SwitchEnumInstBase>(TI);
+    auto *SWI = dyn_cast<SwitchEnumInstBase>(TI);
     if (!SWI)
       continue;
     
@@ -2522,7 +2562,7 @@ bool ArgumentSplitter::createNewArguments() {
 
   // Only handle struct and tuple type.
   SILType Ty = Arg->getType();
-  if (!Ty.getStructOrBoundGenericStruct() && !Ty.getAs<TupleType>())
+  if (!Ty.getStructOrBoundGenericStruct() && !Ty.is<TupleType>())
     return false;
 
   // Get the first level projection for the struct or tuple type.
@@ -2547,7 +2587,8 @@ bool ArgumentSplitter::createNewArguments() {
   // old one.
   llvm::SmallVector<SILValue, 4> NewArgumentValues;
   for (auto &P : Projections) {
-    auto *NewArg = ParentBB->createPHIArgument(P.getType(Ty, Mod));
+    auto *NewArg = ParentBB->createPHIArgument(P.getType(Ty, Mod),
+                                               ValueOwnershipKind::Owned);
     // This is unfortunate, but it feels wrong to put in an API into SILBuilder
     // that only takes in arguments.
     //
@@ -3214,7 +3255,7 @@ bool simplifyToSelectValue(SILBasicBlock *MergeBlock, unsigned ArgNum,
         EnumInst *PrevResult =
             dyn_cast<EnumInst>(CaseLiteralsToResultMap[CaseInfo.Literal]);
         assert(PrevResult && "Prev. case result is not an EnumInst");
-        EnumInst *CurrResult = dyn_cast<EnumInst>(CaseInfo.Result);
+        auto *CurrResult = dyn_cast<EnumInst>(CaseInfo.Result);
         assert(CurrResult && "Curr. case result is not an EnumInst");
         if (PrevResult->getElement() != CurrResult->getElement()) {
           // result value does not match - bail
@@ -3323,7 +3364,8 @@ bool SimplifyCFG::simplifyArgument(SILBasicBlock *BB, unsigned i) {
   // the uses in this block, and then rewrite the branch operands.
   DEBUG(llvm::dbgs() << "unwrap argument:" << *A);
   A->replaceAllUsesWith(SILUndef::get(A->getType(), BB->getModule()));
-  auto *NewArg = BB->replacePHIArgument(i, User->getType());
+  auto *NewArg =
+      BB->replacePHIArgument(i, User->getType(), ValueOwnershipKind::Owned);
   User->replaceAllUsesWith(NewArg);
 
   // Rewrite the branch operand for each incoming branch.
@@ -3464,7 +3506,6 @@ public:
       invalidateAnalysis(SILAnalysis::InvalidationKind::FunctionBody);
   }
 
-  StringRef getName() override { return "Simplify CFG"; }
 };
 } // end anonymous namespace
 
@@ -3503,7 +3544,6 @@ public:
     }
   }
 
-  StringRef getName() override { return "Split Critical Edges"; }
 };
 
 // Used to test SimplifyCFG::simplifyArgs with sil-opt.
@@ -3519,7 +3559,6 @@ public:
     }
   }
   
-  StringRef getName() override { return "Simplify Block Args"; }
 };
 
 // Used to test splitBBArguments with sil-opt
@@ -3533,7 +3572,6 @@ public:
     }
   }
 
-  StringRef getName() override { return "SROA BB Arguments"; }
 };
 
 // Used to test tryMoveCondFailToPreds with sil-opt
@@ -3549,7 +3587,6 @@ public:
     }
   }
 
-  StringRef getName() override { return "Move Cond Fail To Preds"; }
 };
 
 } // end anonymous namespace

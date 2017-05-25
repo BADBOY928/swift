@@ -1,8 +1,8 @@
-//===--- SILArgumentConvention.h ------------------------------------------===//
+//===--- SILArgumentConvention.h --------------------------------*- C++ -*-===//
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -31,11 +31,13 @@ enum class InoutAliasingAssumption {
 
 /// Conventions for apply operands and function-entry arguments in SIL.
 ///
-/// By design, this is exactly the same as ParameterConvention, plus
-/// Indirect_Out.
+/// This is simply a union of ParameterConvention and ResultConvention
+/// (ParameterConvention + Indirect_Out) for convenience when visiting all
+/// arguments.
 struct SILArgumentConvention {
   enum ConventionType : uint8_t {
     Indirect_In,
+    Indirect_In_Constant,
     Indirect_In_Guaranteed,
     Indirect_Inout,
     Indirect_InoutAliasable,
@@ -53,6 +55,9 @@ struct SILArgumentConvention {
     switch (Conv) {
     case ParameterConvention::Indirect_In:
       Value = SILArgumentConvention::Indirect_In;
+      return;
+    case ParameterConvention::Indirect_In_Constant:
+      Value = SILArgumentConvention::Indirect_In_Constant;
       return;
     case ParameterConvention::Indirect_Inout:
       Value = SILArgumentConvention::Indirect_Inout;
@@ -72,9 +77,6 @@ struct SILArgumentConvention {
     case ParameterConvention::Direct_Owned:
       Value = SILArgumentConvention::Direct_Owned;
       return;
-    case ParameterConvention::Direct_Deallocating:
-      Value = SILArgumentConvention::Direct_Deallocating;
-      return;
     }
     llvm_unreachable("covered switch isn't covered?!");
   }
@@ -92,6 +94,7 @@ struct SILArgumentConvention {
   bool isNotAliasedIndirectParameter(InoutAliasingAssumption isInoutAliasing) {
     switch (Value) {
     case SILArgumentConvention::Indirect_In:
+    case SILArgumentConvention::Indirect_In_Constant:
     case SILArgumentConvention::Indirect_Out:
     case SILArgumentConvention::Indirect_In_Guaranteed:
       return true;

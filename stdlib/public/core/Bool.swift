@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -61,6 +61,7 @@
 /// have a consistent type interface.
 @_fixed_layout
 public struct Bool {
+  @_versioned
   internal var _value: Builtin.Int1
 
   /// Creates an instance initialized to `false`.
@@ -77,6 +78,9 @@ public struct Bool {
   @_transparent
   internal init(_ v: Builtin.Int1) { self._value = v }
   
+  /// Creates an instance equal to the given Boolean value.
+  ///
+  /// - Parameter value: The Boolean value to copy.
   public init(_ value: Bool) {
     self = value
   }
@@ -154,6 +158,12 @@ extension Bool : Equatable, Hashable {
 }
 
 extension Bool : LosslessStringConvertible {
+  /// Creates a new Boolean value from the given string.
+  ///
+  /// If `description` is any string other than `"true"` or `"false"`, the
+  /// result is `nil`. This initializer is case sensitive.
+  ///
+  /// - Parameter description: A string representation of the Boolean value.
   public init?(_ description: String) {
     if description == "true" {
       self = true
@@ -192,9 +202,9 @@ extension Bool {
 }
 
 extension Bool {
-  /// Performs a logical AND operation on two Bool values.
+  /// Performs a logical AND operation on two Boolean values.
   ///
-  /// The logical AND operator (`&&`) combines two Bool values and returns
+  /// The logical AND operator (`&&`) combines two Boolean values and returns
   /// `true` if both of the values are `true`. If either of the values is
   /// `false`, the operator returns `false`.
   ///
@@ -231,9 +241,9 @@ extension Bool {
     return lhs ? try rhs() : false
   }
 
-  /// Performs a logical OR operation on two Bool values.
+  /// Performs a logical OR operation on two Boolean values.
   ///
-  /// The logical OR operator (`||`) combines two Bool values and returns
+  /// The logical OR operator (`||`) combines two Boolean values and returns
   /// `true` if at least one of the values is `true`. If both values are
   /// `false`, the operator returns `false`.
   ///

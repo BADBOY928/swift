@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "globalopt"
-#include "swift/Basic/DemangleWrappers.h"
+#include "swift/Demangling/Demangle.h"
 #include "swift/SIL/CFG.h"
 #include "swift/SIL/DebugUtils.h"
 #include "swift/SIL/SILInstruction.h"
@@ -24,7 +24,6 @@
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
-#include "swift/AST/Mangle.h"
 #include "swift/AST/ASTMangler.h"
 using namespace swift;
 
@@ -177,7 +176,7 @@ static void removeToken(SILValue Op) {
       ATPI->eraseFromParent();
   }
 
-  if (GlobalAddrInst *GAI = dyn_cast<GlobalAddrInst>(Op)) {
+  if (auto *GAI = dyn_cast<GlobalAddrInst>(Op)) {
     auto *Global = GAI->getReferencedGlobal();
     // If "global_addr token" is used more than one time, bail.
     if (!(GAI->use_empty() || GAI->hasOneUse()))
@@ -192,15 +191,8 @@ static void removeToken(SILValue Op) {
 }
 
 static std::string mangleGetter(VarDecl *varDecl) {
-  Mangle::Mangler getterMangler;
-  getterMangler.append("_T");
-  getterMangler.mangleGlobalGetterEntity(varDecl);
-  std::string Old = getterMangler.finalize();
-
-  NewMangling::ASTMangler NewMangler;
-  std::string New = NewMangler.mangleGlobalGetterEntity(varDecl);
-
-  return NewMangling::selectMangling(Old, New);
+  Mangle::ASTMangler Mangler;
+  return Mangler.mangleGlobalGetterEntity(varDecl);
 }
 
 /// Generate getter from the initialization code whose
@@ -240,10 +232,11 @@ static SILFunction *genGetterFromInit(StoreInst *Store,
   auto LoweredType = SILFunctionType::get(nullptr, EInfo,
       ParameterConvention::Direct_Owned, { }, Results, None,
       Store->getModule().getASTContext());
-  auto *GetterF = Store->getModule().getOrCreateFunction(Store->getLoc(),
+  auto *GetterF = Store->getModule().getOrCreateFunction(
+      Store->getLoc(),
       getterName, SILLinkage::Private, LoweredType,
       IsBare_t::IsBare, IsTransparent_t::IsNotTransparent,
-      IsFragile_t::IsFragile);
+      IsSerialized_t::IsSerialized);
   GetterF->setDebugScope(Store->getFunction()->getDebugScope());
   if (Store->getFunction()->hasUnqualifiedOwnership())
     GetterF->setUnqualifiedOwnership();
@@ -263,7 +256,7 @@ static SILFunction *genGetterFromInit(StoreInst *Store,
       I.eraseFromParent();
       continue;
     }
-    if (StoreInst *SI = dyn_cast<StoreInst>(&I)) {
+    if (auto *SI = dyn_cast<StoreInst>(&I)) {
       Val = SI->getSrc();
       SILBuilderWithScope B(SI);
       B.createReturn(SI->getLoc(), Val);
@@ -296,8 +289,8 @@ static SILFunction *getCalleeOfOnceCall(BuiltinInst *BI) {
   assert(BI->getNumOperands() == 2 && "once call should have 2 operands.");
 
   auto Callee = BI->getOperand(1);
-  assert(cast<SILFunctionType>(Callee->getType().getSwiftRValueType())
-                 ->getRepresentation() == SILFunctionTypeRepresentation::Thin &&
+  assert(Callee->getType().castTo<SILFunctionType>()->getRepresentation()
+           == SILFunctionTypeRepresentation::Thin &&
          "Expected thin function representation!");
 
   if (auto *FR = dyn_cast<FunctionRefInst>(Callee))
@@ -355,11 +348,11 @@ bool SILGlobalOpt::isInLoop(SILBasicBlock *CurBB) {
 /// Returns true if the block \p BB is terminated with a cond_br based on an
 /// availability check.
 static bool isAvailabilityCheck(SILBasicBlock *BB) {
-  CondBranchInst *CBR = dyn_cast<CondBranchInst>(BB->getTerminator());
+  auto *CBR = dyn_cast<CondBranchInst>(BB->getTerminator());
   if (!CBR)
     return false;
   
-  ApplyInst *AI = dyn_cast<ApplyInst>(CBR->getCondition());
+  auto *AI = dyn_cast<ApplyInst>(CBR->getCondition());
   if (!AI)
     return false;
 
@@ -398,7 +391,7 @@ static bool isAvailabilityCheckOnDomPath(SILBasicBlock *From, SILBasicBlock *To,
 void SILGlobalOpt::placeInitializers(SILFunction *InitF,
                                      ArrayRef<ApplyInst*> Calls) {
   DEBUG(llvm::dbgs() << "GlobalOpt: calls to "
-        << demangle_wrappers::demangleSymbolAsString(InitF->getName())
+        << Demangle::demangleSymbolAsString(InitF->getName())
         << " : " << Calls.size() << "\n");
   // Map each initializer-containing function to its final initializer call.
   llvm::DenseMap<SILFunction*, ApplyInst*> ParentFuncs;
@@ -493,10 +486,11 @@ static SILFunction *genGetterFromInit(SILFunction *InitF, VarDecl *varDecl) {
   auto LoweredType = SILFunctionType::get(nullptr, EInfo,
       ParameterConvention::Direct_Owned, { }, Results, None,
       InitF->getASTContext());
-  auto *GetterF = InitF->getModule().getOrCreateFunction(InitF->getLocation(),
-     getterName, SILLinkage::Private, LoweredType,
+  auto *GetterF = InitF->getModule().getOrCreateFunction(
+      InitF->getLocation(),
+      getterName, SILLinkage::Private, LoweredType,
       IsBare_t::IsBare, IsTransparent_t::IsNotTransparent,
-      IsFragile_t::IsFragile);
+      IsSerialized_t::IsSerialized);
   if (InitF->hasUnqualifiedOwnership())
     GetterF->setUnqualifiedOwnership();
 
@@ -517,13 +511,13 @@ static SILFunction *genGetterFromInit(SILFunction *InitF, VarDecl *varDecl) {
       continue;
     }
 
-    if (StoreInst *SI = dyn_cast<StoreInst>(&I)) {
+    if (auto *SI = dyn_cast<StoreInst>(&I)) {
       Val = SI->getSrc();
       Store = SI;
       continue;
     }
 
-    if (ReturnInst *RI = dyn_cast<ReturnInst>(&I)) {
+    if (auto *RI = dyn_cast<ReturnInst>(&I)) {
       SILBuilderWithScope B(RI);
       B.createReturn(RI->getLoc(), Val);
       eraseUsesOfInstruction(RI);
@@ -548,7 +542,7 @@ static SILFunction *findInitializer(SILModule *Module, SILFunction *AddrF,
   SILBasicBlock *BB = &AddrF->front();
   for (auto &I : *BB) {
     // Find the builtin "once" call.
-    if (BuiltinInst *BI = dyn_cast<BuiltinInst>(&I)) {
+    if (auto *BI = dyn_cast<BuiltinInst>(&I)) {
       const BuiltinInfo &Builtin = Module->getBuiltinInfo(BI->getName());
       if (Builtin.ID != BuiltinValueKind::Once)
         continue;
@@ -901,12 +895,12 @@ bool SILGlobalOpt::run() {
     for (auto &BB : F) {
       bool IsCold = ColdBlocks.isCold(&BB);
       for (auto &I : BB)
-        if (BuiltinInst *BI = dyn_cast<BuiltinInst>(&I)) {
+        if (auto *BI = dyn_cast<BuiltinInst>(&I)) {
           collectOnceCall(BI);
-        } else if (ApplyInst *AI = dyn_cast<ApplyInst>(&I)) {
+        } else if (auto *AI = dyn_cast<ApplyInst>(&I)) {
           if (!IsCold)
             collectGlobalInitCall(AI);
-        } else if (GlobalAddrInst *GAI = dyn_cast<GlobalAddrInst>(&I)) {
+        } else if (auto *GAI = dyn_cast<GlobalAddrInst>(&I)) {
             collectGlobalAccess(GAI);
         }
     }
@@ -932,11 +926,10 @@ class SILGlobalOptPass : public SILModuleTransform
   void run() override {
     DominanceAnalysis *DA = PM->getAnalysis<DominanceAnalysis>();
     if (SILGlobalOpt(getModule(), DA).run()) {
-      invalidateAnalysis(SILAnalysis::InvalidationKind::FunctionBody);
+      invalidateAll();
     }
   }
 
-  StringRef getName() override { return "SIL Global Optimization"; }
 };
 } // end anonymous namespace
 

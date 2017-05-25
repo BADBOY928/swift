@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -14,7 +14,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "swift/Basic/Fallthrough.h"
 #include "swift/Parse/Parser.h"
 #include "swift/AST/Attr.h"
 #include "swift/AST/TypeLoc.h"
@@ -23,7 +22,9 @@
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/SaveAndRestore.h"
+
 using namespace swift;
 
 TypeRepr *Parser::applyAttributeToType(TypeRepr *ty,
@@ -57,6 +58,83 @@ TypeRepr *Parser::applyAttributeToType(TypeRepr *ty,
   }
 
   return ty;
+}
+
+LayoutConstraint Parser::parseLayoutConstraint(Identifier LayoutConstraintID) {
+  LayoutConstraint layoutConstraint =
+      getLayoutConstraint(LayoutConstraintID, Context);
+  assert(layoutConstraint->isKnownLayout() &&
+         "Expected layout constraint definition");
+
+  if (!layoutConstraint->isTrivial())
+    return layoutConstraint;
+
+  SourceLoc LParenLoc;
+  if (!consumeIf(tok::l_paren, LParenLoc)) {
+    // It is a trivial without any size constraints.
+    return LayoutConstraint::getLayoutConstraint(LayoutConstraintKind::Trivial,
+                                                 Context);
+  }
+
+  int size = 0;
+  int alignment = 0;
+
+  auto ParseTrivialLayoutConstraintBody = [&] () -> bool {
+    // Parse the size and alignment.
+    if (Tok.is(tok::integer_literal)) {
+      if (Tok.getText().getAsInteger(10, size)) {
+        diagnose(Tok.getLoc(), diag::layout_size_should_be_positive);
+        return true;
+      }
+      consumeToken();
+      if (consumeIf(tok::comma)) {
+        // parse alignment.
+        if (Tok.is(tok::integer_literal)) {
+          if (Tok.getText().getAsInteger(10, alignment)) {
+            diagnose(Tok.getLoc(), diag::layout_alignment_should_be_positive);
+            return true;
+          }
+          consumeToken();
+        } else {
+          diagnose(Tok.getLoc(), diag::layout_alignment_should_be_positive);
+          return true;
+        }
+      }
+    } else {
+      diagnose(Tok.getLoc(), diag::layout_size_should_be_positive);
+      return true;
+    }
+    return false;
+  };
+
+  if (ParseTrivialLayoutConstraintBody()) {
+    // There was an error during parsing.
+    skipUntil(tok::r_paren);
+    consumeIf(tok::r_paren);
+    return LayoutConstraint::getUnknownLayout();
+  }
+
+  if (!consumeIf(tok::r_paren)) {
+    // Expected a closing r_paren.
+    diagnose(Tok.getLoc(), diag::expected_rparen_layout_constraint);
+    consumeToken();
+    return LayoutConstraint::getUnknownLayout();
+  }
+
+  if (size < 0) {
+    diagnose(Tok.getLoc(), diag::layout_size_should_be_positive);
+    return LayoutConstraint::getUnknownLayout();
+  }
+
+  if (alignment < 0) {
+    diagnose(Tok.getLoc(), diag::layout_alignment_should_be_positive);
+    return LayoutConstraint::getUnknownLayout();
+  }
+
+  // Otherwise it is a trivial layout constraint with
+  // provided size and alignment.
+  return LayoutConstraint::getLayoutConstraint(layoutConstraint->getKind(), size,
+                                               alignment, Context);
 }
 
 ParserResult<TypeRepr> Parser::parseTypeSimple() {
@@ -116,9 +194,14 @@ ParserResult<TypeRepr> Parser::parseTypeSimple(Diag<> MessageID,
       ty = parseOldStyleProtocolComposition();
       break;
     }
-    SWIFT_FALLTHROUGH;
+    LLVM_FALLTHROUGH;
   default:
-    diagnose(Tok, MessageID);
+    auto diag = diagnose(Tok, MessageID);
+    // If the next token is closing or separating, the type was likely forgotten
+    if (Tok.isAny(tok::r_paren, tok::r_brace, tok::r_square, tok::arrow,
+                  tok::equal, tok::comma, tok::semi)) {
+      diag.fixItInsert(getEndOfPreviousLoc(), " <#type#>");
+    }
     if (Tok.isKeyword() && !Tok.isAtStartOfLine()) {
       ty = makeParserErrorResult(new (Context) ErrorTypeRepr(Tok.getLoc()));
       consumeToken();
@@ -254,6 +337,7 @@ ParserResult<TypeRepr> Parser::parseSILBoxType(GenericParamList *generics,
 ///
 ///   type-function:
 ///     type-composition '->' type
+///     type-composition 'throws' '->' type
 ///
 ParserResult<TypeRepr> Parser::parseType(Diag<> MessageID,
                                          bool HandleCodeCompletion,
@@ -284,62 +368,64 @@ ParserResult<TypeRepr> Parser::parseType(Diag<> MessageID,
     parseTypeSimpleOrComposition(MessageID, HandleCodeCompletion);
   if (ty.hasCodeCompletion())
     return makeParserCodeCompletionResult<TypeRepr>();
-
   if (ty.isNull())
     return nullptr;
+  auto tyR = ty.get();
 
-  // Parse a throws specifier.  'throw' is probably a typo for 'throws',
-  // but in local contexts we could just be at the end of a statement,
-  // so we need to check for the arrow.
-  ParserPosition beforeThrowsPos;
+  // Parse a throws specifier.
+  // Don't consume 'throws', if the next token is not '->', so we can emit a
+  // more useful diagnostic when parsing a function decl.
   SourceLoc throwsLoc;
-  bool rethrows = false;
-  if (Tok.isAny(tok::kw_throws, tok::kw_rethrows) ||
-      (Tok.is(tok::kw_throw) && peekToken().is(tok::arrow))) {
-    if (Tok.is(tok::kw_throw)) {
-      diagnose(Tok.getLoc(), diag::throw_in_function_type)
+  if (Tok.isAny(tok::kw_throws, tok::kw_rethrows, tok::kw_throw) &&
+      peekToken().is(tok::arrow)) {
+    if (Tok.isNot(tok::kw_throws)) {
+      // 'rethrows' is only allowed on function declarations for now.
+      // 'throw' is probably a typo for 'throws'.
+      Diag<> DiagID = Tok.is(tok::kw_rethrows) ?
+        diag::rethrowing_function_type : diag::throw_in_function_type;
+      diagnose(Tok.getLoc(), DiagID)
         .fixItReplace(Tok.getLoc(), "throws");
     }
-
-    beforeThrowsPos = getParserPosition();
-    rethrows = Tok.is(tok::kw_rethrows);
     throwsLoc = consumeToken();
   }
 
-  // Handle type-function if we have an arrow.
-  SourceLoc arrowLoc;
-  if (consumeIf(tok::arrow, arrowLoc)) {
+  if (Tok.is(tok::arrow)) {
+    // Handle type-function if we have an arrow.
+    SourceLoc arrowLoc = consumeToken();
     ParserResult<TypeRepr> SecondHalf =
       parseType(diag::expected_type_function_result);
     if (SecondHalf.hasCodeCompletion())
       return makeParserCodeCompletionResult<TypeRepr>();
     if (SecondHalf.isNull())
       return nullptr;
-    if (rethrows) {
-      // 'rethrows' is only allowed on function declarations for now.
-      diagnose(throwsLoc, diag::rethrowing_function_type);
-    }
-    auto fnTy = new (Context) FunctionTypeRepr(generics, ty.get(),
-                                               throwsLoc,
-                                               arrowLoc,
-                                               SecondHalf.get());
-    return makeParserResult(applyAttributeToType(fnTy, inoutLoc, attrs));
-  } else if (throwsLoc.isValid()) {
-    // Don't consume 'throws', so we can emit a more useful diagnostic when
-    // parsing a function decl.
-    restoreParserPosition(beforeThrowsPos);
-  }
-  
-  // Only function types may be generic.
-  if (generics) {
+    tyR = new (Context) FunctionTypeRepr(generics, tyR, throwsLoc, arrowLoc,
+                                         SecondHalf.get());
+  } else if (generics) {
+    // Only function types may be generic.
     auto brackets = generics->getSourceRange();
     diagnose(brackets.Start, diag::generic_non_function);
+    GenericsScope.reset();
+
+    // Forget any generic parameters we saw in the type.
+    class EraseTypeParamWalker : public ASTWalker {
+    public:
+      bool walkToTypeReprPre(TypeRepr *T) override {
+        if (auto ident = dyn_cast<ComponentIdentTypeRepr>(T)) {
+          if (auto decl = ident->getBoundDecl()) {
+            if (isa<GenericTypeParamDecl>(decl))
+              ident->overwriteIdentifier(decl->getName());
+          }
+        }
+        return true;
+      }
+
+    } walker;
+
+    if (tyR)
+      tyR->walk(walker);
   }
 
-  if (ty.isNonNull() && !ty.hasCodeCompletion()) {
-    ty = makeParserResult(applyAttributeToType(ty.get(), inoutLoc, attrs));
-  }
-  return ty;
+  return makeParserResult(applyAttributeToType(tyR, inoutLoc, attrs));
 }
 
 ParserResult<TypeRepr> Parser::parseTypeForInheritance(
@@ -500,8 +586,8 @@ ParserResult<TypeRepr> Parser::parseTypeIdentifier() {
     // Lookup element #0 through our current scope chains in case it is some
     // thing local (this returns null if nothing is found).
     if (auto Entry = lookupInScope(ComponentsR[0]->getIdentifier()))
-      if (isa<TypeDecl>(Entry))
-        ComponentsR[0]->setValue(Entry);
+      if (auto *TD = dyn_cast<TypeDecl>(Entry))
+        ComponentsR[0]->setValue(TD);
 
     ITR = IdentTypeRepr::create(Context, ComponentsR);
   }
@@ -698,7 +784,6 @@ ParserResult<TupleTypeRepr> Parser::parseTypeTupleBody() {
     Labels;
 
   ParserStatus Status = parseList(tok::r_paren, LPLoc, RPLoc,
-                                  tok::comma, /*OptionalSep=*/false,
                                   /*AllowSepAfterLast=*/false,
                                   diag::expected_rparen_tuple_type_list,
                                   [&] () -> ParserStatus {
@@ -1056,9 +1141,13 @@ static bool isGenericTypeDisambiguatingToken(Parser &P) {
   case tok::exclaim_postfix:
   case tok::question_postfix:
     return true;
-  
-  case tok::oper_binary_unspaced:
+
   case tok::oper_binary_spaced:
+    if (tok.getText() == "&")
+      return true;
+
+    LLVM_FALLTHROUGH;
+  case tok::oper_binary_unspaced:
   case tok::oper_postfix:
     // These might be '?' or '!' type modifiers.
     return P.isOptionalToken(tok) || P.isImplicitlyUnwrappedOptionalToken(tok);

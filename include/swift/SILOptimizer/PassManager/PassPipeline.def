@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -32,10 +32,12 @@
 
 PASSPIPELINE_WITH_OPTIONS(Diagnostic, "Guaranteed Passes")
 PASSPIPELINE(OwnershipEliminator, "Utility pass to just run the ownership eliminator pass")
+PASSPIPELINE_WITH_OPTIONS(SILOptPrepare, "Passes that prepare SIL for -O")
 PASSPIPELINE_WITH_OPTIONS(Performance, "Passes run at -O")
 PASSPIPELINE(Onone, "Passes run at -Onone")
 PASSPIPELINE(InstCount, "Utility pipeline to just run the inst count pass")
-PASSPIPELINE(IRGenPrepare, "Pipeline to run during IRGen")
+PASSPIPELINE(Lowering, "SIL Address Lowering")
+PASSPIPELINE_WITH_OPTIONS(IRGenPrepare, "Pipeline to run during IRGen")
 
 #undef PASSPIPELINE_WITH_OPTIONS
 #undef PASSPIPELINE

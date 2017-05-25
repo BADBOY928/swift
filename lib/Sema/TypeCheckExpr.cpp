@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -18,6 +18,7 @@
 #include "TypeChecker.h"
 #include "swift/AST/NameLookup.h"
 #include "swift/AST/Decl.h"
+#include "swift/AST/Initializer.h"
 #include "swift/Parse/Lexer.h"
 using namespace swift;
 
@@ -166,12 +167,12 @@ TypeChecker::lookupPrecedenceGroupForInfixOperator(DeclContext *DC, Expr *E) {
                                      castExpr->getAsLoc());
   }
 
-  if (DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(E)) {
+  if (auto *DRE = dyn_cast<DeclRefExpr>(E)) {
     Identifier name = DRE->getDecl()->getName();
     return lookupPrecedenceGroupForOperator(*this, DC, name, DRE->getLoc());
   }
 
-  if (OverloadedDeclRefExpr *OO = dyn_cast<OverloadedDeclRefExpr>(E)) {
+  if (auto *OO = dyn_cast<OverloadedDeclRefExpr>(E)) {
     Identifier name = OO->getDecls()[0]->getName();
     return lookupPrecedenceGroupForOperator(*this, DC, name, OO->getLoc());
   }
@@ -206,7 +207,7 @@ static Expr *makeBinOp(TypeChecker &TC, Expr *Op, Expr *LHS, Expr *RHS,
     return nullptr;
 
   // If the left-hand-side is a 'try', hoist it up.
-  AnyTryExpr *tryEval = dyn_cast<AnyTryExpr>(LHS);
+  auto *tryEval = dyn_cast<AnyTryExpr>(LHS);
   if (tryEval) {
     LHS = tryEval->getSubExpr();
   }
@@ -579,6 +580,16 @@ Type TypeChecker::getUnopenedTypeOfReference(ValueDecl *value, Type baseType,
 
   Type requestedType = getTypeOfRValue(value, wantInterfaceType);
 
+  // If we're dealing with contextual types, and we referenced this type from
+  // a different context, map the type.
+  if (!wantInterfaceType && requestedType->hasArchetype()) {
+    auto valueDC = value->getDeclContext();
+    if (valueDC != UseDC) {
+      Type mapped = valueDC->mapTypeOutOfContext(requestedType);
+      requestedType = UseDC->mapTypeIntoContext(mapped);
+    }
+  }
+
   // Qualify storage declarations with an lvalue when appropriate.
   // Otherwise, they yield rvalues (and the access must be a load).
   if (auto *storage = dyn_cast<AbstractStorageDecl>(value)) {
@@ -590,27 +601,24 @@ Type TypeChecker::getUnopenedTypeOfReference(ValueDecl *value, Type baseType,
       // Subscript decls have function type.  For the purposes of later type
       // checker consumption, model this as returning an lvalue.
       assert(isa<SubscriptDecl>(storage));
-      auto *RFT = requestedType->castTo<FunctionType>();
+      auto *RFT = requestedType->castTo<AnyFunctionType>();
       return FunctionType::get(RFT->getInput(),
                                LValueType::get(RFT->getResult()),
                                RFT->getExtInfo());
     }
-  }
 
-  // If we're dealing with contextual types, and we referenced this type from
-  // a different context, map the type.
-  if (!wantInterfaceType && requestedType->hasArchetype()) {
-    auto valueDC = value->getDeclContext();
-    if (valueDC != UseDC) {
-      Type mapped = valueDC->mapTypeOutOfContext(requestedType);
-      requestedType = UseDC->mapTypeIntoContext(mapped);
+    // FIXME: Fix downstream callers.
+    if (auto *genericFn = requestedType->getAs<GenericFunctionType>()) {
+      return FunctionType::get(genericFn->getInput(),
+                               genericFn->getResult(),
+                               genericFn->getExtInfo());
     }
   }
 
   return requestedType;
 }
 
-Expr *TypeChecker::buildCheckedRefExpr(ValueDecl *value, DeclContext *UseDC,
+Expr *TypeChecker::buildCheckedRefExpr(VarDecl *value, DeclContext *UseDC,
                                        DeclNameLoc loc, bool Implicit) {
   auto type = getUnopenedTypeOfReference(value, Type(), UseDC);
   AccessSemantics semantics = value->getAccessSemanticsFromContext(UseDC);

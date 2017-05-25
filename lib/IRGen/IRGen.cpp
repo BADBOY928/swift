@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -16,7 +16,6 @@
 
 #define DEBUG_TYPE "irgen"
 #include "swift/Subsystems.h"
-#include "swift/AST/AST.h"
 #include "swift/AST/DiagnosticsIRGen.h"
 #include "swift/AST/IRGenOptions.h"
 #include "swift/AST/LinkLibrary.h"
@@ -36,7 +35,7 @@
 #include "swift/SILOptimizer/PassManager/PassPipeline.h"
 #include "clang/Basic/TargetInfo.h"
 #include "llvm/Bitcode/BitcodeWriterPass.h"
-#include "llvm/Bitcode/ReaderWriter.h"
+#include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/CodeGen/BasicTTIImpl.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
@@ -61,6 +60,7 @@
 #include "llvm/Target/TargetSubtargetInfo.h"
 #include "llvm/Transforms/Instrumentation.h"
 #include "llvm/Transforms/IPO.h"
+#include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/ObjCARC.h"
 #include "llvm/Object/ObjectFile.h"
@@ -127,6 +127,10 @@ swift::getIRTargetOptions(IRGenOptions &Opts, ASTContext &Ctx) {
   // FIXME: We should do this entirely through Clang, for consistency.
   TargetOptions TargetOpts;
 
+  // Explicitly request debugger tuning for LLDB which is the default
+  // on Darwin platforms but not on others.
+  TargetOpts.DebuggerTuning = llvm::DebuggerKind::LLDB;
+
   auto *Clang = static_cast<ClangImporter *>(Ctx.getClangModuleLoader());
   clang::TargetOptions &ClangOpts = Clang->getTargetInfo().getTargetOpts();
   return std::make_tuple(TargetOpts, ClangOpts.CPU, ClangOpts.Features);
@@ -150,7 +154,8 @@ void swift::performLLVMOptimizations(IRGenOptions &Opts, llvm::Module *Module,
   PassManagerBuilderWrapper PMBuilder(Opts);
 
   if (Opts.Optimize && !Opts.DisableLLVMOptzns) {
-    PMBuilder.OptLevel = 3;
+    PMBuilder.OptLevel = 2; // -Os
+    PMBuilder.SizeLevel = 1; // -Os
     PMBuilder.Inliner = llvm::createFunctionInliningPass(200);
     PMBuilder.SLPVectorize = true;
     PMBuilder.LoopVectorize = true;
@@ -159,7 +164,7 @@ void swift::performLLVMOptimizations(IRGenOptions &Opts, llvm::Module *Module,
     PMBuilder.OptLevel = 0;
     if (!Opts.DisableLLVMOptzns)
       PMBuilder.Inliner =
-        llvm::createAlwaysInlinerPass(/*insertlifetime*/false);
+        llvm::createAlwaysInlinerLegacyPass(/*insertlifetime*/false);
   }
 
   // If the optimizer is enabled, we run the ARCOpt pass in the scalar optimizer
@@ -373,7 +378,8 @@ bool swift::performLLVM(IRGenOptions &Opts, DiagnosticEngine *Diags,
       if (DiagMutex) DiagMutex->unlock();
     );
 
-    ArrayRef<uint8_t> HashData(Result, sizeof(MD5::MD5Result));
+    ArrayRef<uint8_t> HashData(reinterpret_cast<uint8_t *>(&Result),
+                               sizeof(Result));
     if (Opts.OutputKind == IRGenOutputKind::ObjectFile &&
         !Opts.PrintInlineTree &&
         !needsRecompile(OutputFilename, HashData, HashGlobal, DiagMutex)) {
@@ -394,6 +400,7 @@ bool swift::performLLVM(IRGenOptions &Opts, DiagnosticEngine *Diags,
     llvm::sys::fs::OpenFlags OSFlags = llvm::sys::fs::F_None;
     std::error_code EC;
     RawOS.emplace(OutputFilename, EC, OSFlags);
+
     if (RawOS->has_error() || EC) {
       if (Diags) {
         if (DiagMutex)
@@ -474,7 +481,7 @@ swift::createTargetMachine(IRGenOptions &Opts, ASTContext &Ctx) {
     return nullptr;
   }
 
-  CodeGenOpt::Level OptLevel = Opts.Optimize ? CodeGenOpt::Aggressive
+  CodeGenOpt::Level OptLevel = Opts.Optimize ? CodeGenOpt::Default // -Os
                                              : CodeGenOpt::None;
 
   // Set up TargetOptions and create the target features string.
@@ -492,10 +499,17 @@ swift::createTargetMachine(IRGenOptions &Opts, ASTContext &Ctx) {
   }
 
   // Create a target machine.
-  llvm::TargetMachine *TargetMachine
-    = Target->createTargetMachine(Triple.str(), CPU,
-                                  targetFeatures, TargetOpts, Reloc::PIC_,
-                                  CodeModel::Default, OptLevel);
+  auto cmodel = CodeModel::Default;
+
+  // On Windows 64 bit, dlls are loaded above the max address for 32 bits.
+  // This means that a default CodeModel causes generated code to segfault
+  // when run.
+  if (Triple.isArch64Bit() && Triple.isOSWindows())
+    cmodel = CodeModel::Large;
+
+  llvm::TargetMachine *TargetMachine =
+      Target->createTargetMachine(Triple.str(), CPU, targetFeatures, TargetOpts,
+                                  Reloc::PIC_, cmodel, OptLevel);
   if (!TargetMachine) {
     Ctx.Diags.diagnose(SourceLoc(), diag::no_llvm_target,
                        Triple.str(), "no LLVM target machine");
@@ -632,18 +646,25 @@ void swift::irgen::deleteIRGenModule(
 static void runIRGenPreparePasses(SILModule &Module,
                                   irgen::IRGenModule &IRModule) {
   SILPassManager PM(&Module, &IRModule);
-#define PASS(ID, Name, Description)
-#define IRGEN_PASS(ID, Name, Description)                                      \
-    PM.registerIRGenPass(swift::PassKind::ID, irgen::create##ID());
+  bool largeLoadable = Module.getOptions().EnableLargeLoadableTypes;
+#define PASS(ID, Tag, Name)
+#define IRGEN_PASS(ID, Tag, Name)                                              \
+  if (swift::PassKind::ID == swift::PassKind::LoadableByAddress) {             \
+    if (largeLoadable) {                                                       \
+      PM.registerIRGenPass(swift::PassKind::ID, irgen::create##ID());          \
+    }                                                                          \
+  } else {                                                                     \
+    PM.registerIRGenPass(swift::PassKind::ID, irgen::create##ID());            \
+  }
 #include "swift/SILOptimizer/PassManager/Passes.def"
   PM.executePassPipelinePlan(
-      SILPassPipelinePlan::getIRGenPreparePassPipeline());
+      SILPassPipelinePlan::getIRGenPreparePassPipeline(Module.getOptions()));
 }
 
 /// Generates LLVM IR, runs the LLVM passes and produces the output file.
 /// All this is done in a single thread.
 static std::unique_ptr<llvm::Module> performIRGeneration(IRGenOptions &Opts,
-                                                         swift::Module *M,
+                                                         swift::ModuleDecl *M,
                                             std::unique_ptr<SILModule> SILMod,
                                                          StringRef ModuleName,
                                                  llvm::LLVMContext &LLVMContext,
@@ -688,6 +709,9 @@ static std::unique_ptr<llvm::Module> performIRGeneration(IRGenOptions &Opts,
       }
     }
 
+    // Okay, emit any definitions that we suddenly need.
+    irgen.emitLazyDefinitions();
+
     // Register our info with the runtime if needed.
     if (Opts.UseJIT) {
       IGM.emitRuntimeRegistration();
@@ -698,10 +722,8 @@ static std::unique_ptr<llvm::Module> performIRGeneration(IRGenOptions &Opts,
       IGM.emitTypeMetadataRecords();
       IGM.emitBuiltinReflectionMetadata();
       IGM.emitReflectionMetadataVersion();
+      irgen.emitNSArchiveClassNameRegistration();
     }
-
-    // Okay, emit any definitions that we suddenly need.
-    irgen.emitLazyDefinitions();
 
     // Emit symbols for eliminated dead methods.
     IGM.emitVTableStubs();
@@ -716,9 +738,9 @@ static std::unique_ptr<llvm::Module> performIRGeneration(IRGenOptions &Opts,
     });
 
     // Hack to handle thunks eagerly synthesized by the Clang importer.
-    swift::Module *prev = nullptr;
+    swift::ModuleDecl *prev = nullptr;
     for (auto external : Ctx.ExternalDefinitions) {
-      swift::Module *next = external->getModuleContext();
+      swift::ModuleDecl *next = external->getModuleContext();
       if (next == prev)
         continue;
       prev = next;
@@ -790,7 +812,7 @@ static void ThreadEntryPoint(IRGenerator *irgen,
 /// Generates LLVM IR, runs the LLVM passes and produces the output files.
 /// All this is done in multiple threads.
 static void performParallelIRGeneration(IRGenOptions &Opts,
-                                        swift::Module *M,
+                                        swift::ModuleDecl *M,
                                         std::unique_ptr<SILModule> SILMod,
                                         StringRef ModuleName, int numThreads) {
 
@@ -862,7 +884,7 @@ static void performParallelIRGeneration(IRGenOptions &Opts,
   irgen.emitGlobalTopLevel();
   
   for (auto *File : M->getFiles()) {
-    if (SourceFile *SF = dyn_cast<SourceFile>(File)) {
+    if (auto *SF = dyn_cast<SourceFile>(File)) {
       IRGenModule *IGM = irgen.getGenModule(SF);
       IGM->emitSourceFile(*SF, 0);
     } else {
@@ -872,19 +894,21 @@ static void performParallelIRGeneration(IRGenOptions &Opts,
     }
   }
   
-  IRGenModule *PrimaryGM = irgen.getPrimaryIGM();
+  // Okay, emit any definitions that we suddenly need.
+  irgen.emitLazyDefinitions();
 
   irgen.emitProtocolConformances();
 
   irgen.emitReflectionMetadataVersion();
 
+  irgen.emitNSArchiveClassNameRegistration();
+
   // Emit reflection metadata for builtin and imported types.
   irgen.emitBuiltinReflectionMetadata();
 
-  // Okay, emit any definitions that we suddenly need.
-  irgen.emitLazyDefinitions();
-  
- // Emit symbols for eliminated dead methods.
+  IRGenModule *PrimaryGM = irgen.getPrimaryIGM();
+
+  // Emit symbols for eliminated dead methods.
   PrimaryGM->emitVTableStubs();
     
   // Verify type layout if we were asked to.
@@ -897,9 +921,9 @@ static void performParallelIRGeneration(IRGenOptions &Opts,
                 });
   
   // Hack to handle thunks eagerly synthesized by the Clang importer.
-  swift::Module *prev = nullptr;
+  swift::ModuleDecl *prev = nullptr;
   for (auto external : Ctx.ExternalDefinitions) {
-    swift::Module *next = external->getModuleContext();
+    swift::ModuleDecl *next = external->getModuleContext();
     if (next == prev)
       continue;
     prev = next;
@@ -994,7 +1018,7 @@ static void performParallelIRGeneration(IRGenOptions &Opts,
 
 
 std::unique_ptr<llvm::Module> swift::
-performIRGeneration(IRGenOptions &Opts, swift::Module *M,
+performIRGeneration(IRGenOptions &Opts, swift::ModuleDecl *M,
                     std::unique_ptr<SILModule> SILMod,
                     StringRef ModuleName, llvm::LLVMContext &LLVMContext,
                     llvm::GlobalVariable **outModuleHash) {
@@ -1058,6 +1082,9 @@ swift::createSwiftModuleObjectFile(SILModule &SILMod, StringRef Buffer,
     break;
   case llvm::Triple::MachO:
     Section = std::string(MachOASTSegmentName) + "," + MachOASTSectionName;
+    break;
+  case llvm::Triple::Wasm:
+    llvm_unreachable("web assembly object format is not supported.");
     break;
   }
   ASTSym->setSection(Section);

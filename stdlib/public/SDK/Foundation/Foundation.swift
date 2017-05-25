@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -95,3 +95,20 @@ extension CVarArg where Self: _ObjectiveCBridgeable {
     return _encodeBitsAsWords(object)
   }
 }
+
+//===----------------------------------------------------------------------===//
+// Runtime support for NSKeyedArchives
+//===----------------------------------------------------------------------===//
+
+@_silgen_name("swift_registerClassNameForArchiving")
+public func _registerClassNameForArchiving(_ nameForClass: UnsafePointer<CChar>,
+                                           _ classType: AnyClass) {
+  // If it's not possible to create a String from the name, it should abort
+  // and not fail silently.
+  let nameStr = String(utf8String: nameForClass)!
+
+  // Register the class name mapping for archiving and unarchiving.
+  NSKeyedArchiver.setClassName(nameStr, for: classType)
+  NSKeyedUnarchiver.setClass(classType, forClassName: nameStr)
+}
+

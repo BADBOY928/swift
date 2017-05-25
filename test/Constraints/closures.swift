@@ -64,24 +64,90 @@ func test13811882() {
 
 
 // <rdar://problem/21544303> QoI: "Unexpected trailing closure" should have a fixit to insert a 'do' statement
+// <https://bugs.swift.org/browse/SR-3671>
 func r21544303() {
   var inSubcall = true
-  {   // expected-error {{expected 'do' keyword to designate a block of statements}} {{3-3=do }}
-  }
+  {
+  }  // expected-error {{computed property must have accessors specified}}
   inSubcall = false
 
   // This is a problem, but isn't clear what was intended.
-  var somethingElse = true { // expected-error {{cannot call value of non-function type 'Bool'}}
-  }
+  var somethingElse = true {
+  }  // expected-error {{computed property must have accessors specified}}
   inSubcall = false
 
   var v2 : Bool = false
-  v2 = true
-  {  // expected-error {{expected 'do' keyword to designate a block of statements}}
+  v2 = inSubcall
+  {  // expected-error {{cannot call value of non-function type 'Bool'}} expected-note {{did you mean to use a 'do' statement?}} {{3-3=do }}
   }
 }
 
 
+// <https://bugs.swift.org/browse/SR-3671>
+func SR3671() {
+  let n = 42
+  func consume(_ x: Int) {}
+
+  { consume($0) }(42)
+  ;
+
+  ({ $0(42) } { consume($0) }) // expected-note {{callee is here}}
+
+  { print(42) }  // expected-warning {{braces here form a trailing closure separated from its callee by multiple newlines}} expected-note {{did you mean to use a 'do' statement?}} {{3-3=do }} expected-error {{cannot call value of non-function type '()'}}
+  ;
+
+  ({ $0(42) } { consume($0) }) // expected-note {{callee is here}}
+
+  { print($0) }  // expected-warning {{braces here form a trailing closure separated from its callee by multiple newlines}} expected-error {{cannot call value of non-function type '()'}}
+  ;
+
+  ({ $0(42) } { consume($0) }) // expected-note {{callee is here}}
+
+  { [n] in print(42) }  // expected-warning {{braces here form a trailing closure separated from its callee by multiple newlines}} expected-error {{cannot call value of non-function type '()'}}
+  ;
+
+  ({ $0(42) } { consume($0) }) // expected-note {{callee is here}}
+
+  { consume($0) }(42)  // expected-warning {{braces here form a trailing closure separated from its callee by multiple newlines}} expected-error {{cannot call value of non-function type '()'}}
+  ;
+
+  ({ $0(42) } { consume($0) }) // expected-note {{callee is here}}
+
+  { (x: Int) in consume(x) }(42)  // expected-warning {{braces here form a trailing closure separated from its callee by multiple newlines}} expected-error {{cannot call value of non-function type '()'}}
+  ;
+
+  // This is technically a valid call, so nothing goes wrong until (42)
+
+  { $0(3) }
+  { consume($0) }(42)  // expected-error {{cannot call value of non-function type '()'}}
+  ;
+  ({ $0(42) })
+  { consume($0) }(42)  // expected-error {{cannot call value of non-function type '()'}}
+  ;
+  { $0(3) }
+  { [n] in consume($0) }(42)  // expected-error {{cannot call value of non-function type '()'}}
+  ;
+  ({ $0(42) })
+  { [n] in consume($0) }(42)  // expected-error {{cannot call value of non-function type '()'}}
+  ;
+
+  // Equivalent but more obviously unintended.
+
+  { $0(3) }  // expected-note {{callee is here}}
+
+  { consume($0) }(42)  // expected-error {{cannot call value of non-function type '()'}}
+  // expected-warning@-1 {{braces here form a trailing closure separated from its callee by multiple newlines}}
+
+  ({ $0(3) })  // expected-note {{callee is here}}
+
+  { consume($0) }(42)  // expected-error {{cannot call value of non-function type '()'}}
+  // expected-warning@-1 {{braces here form a trailing closure separated from its callee by multiple newlines}}
+  ;
+
+  // Also a valid call (!!)
+  { $0 { $0 } } { $0 { 1 } }  // expected-error {{expression resolves to an unused function}}
+  consume(111)
+}
 
 
 // <rdar://problem/22162441> Crash from failing to diagnose nonexistent method access inside closure
@@ -94,7 +160,7 @@ func r22162441(_ lines: [String]) {
 func testMap() {
   let a = 42
   [1,a].map { $0 + 1.0 } // expected-error {{binary operator '+' cannot be applied to operands of type 'Int' and 'Double'}}
-  // expected-note @-1 {{overloads for '+' exist with these partially matching parameter lists: (Int, Int), (Double, Double), (Int, UnsafeMutablePointer<Pointee>), (Int, UnsafePointer<Pointee>)}}
+  // expected-note @-1 {{overloads for '+' exist with these partially matching parameter lists: }}
 }
 
 // <rdar://problem/22414757> "UnresolvedDot" "in wrong phase" assertion from verifier
@@ -200,10 +266,8 @@ struct S<T> {
 // Make sure we cannot infer an () argument from an empty parameter list.
 func acceptNothingToInt (_: () -> Int) {}
 func testAcceptNothingToInt(ac1: @autoclosure () -> Int) {
-  // expected-note@-1{{parameter 'ac1' is implicitly non-escaping because it was declared @autoclosure}}
   acceptNothingToInt({ac1($0)})
   // expected-error@-1{{contextual closure type '() -> Int' expects 0 arguments, but 1 was used in closure body}}
-  // FIXME: expected-error@-2{{closure use of non-escaping parameter 'ac1' may allow it to escape}}
 }
 
 // <rdar://problem/23570873> QoI: Poor error calling map without being able to infer "U" (closure result inference)
@@ -261,8 +325,7 @@ func someGeneric19997471<T>(_ x: T) {
 func f20371273() {
   let x: [Int] = [1, 2, 3, 4]
   let y: UInt = 4
-  x.filter { $0 == y }  // expected-error {{binary operator '==' cannot be applied to operands of type 'Int' and 'UInt'}}
-  // expected-note @-1 {{overloads for '==' exist with these partially matching parameter lists: (UInt, UInt), (Int, Int)}}
+  _ = x.filter { ($0 + y)  > 42 }  // expected-warning {{deprecated}}
 }
 
 
@@ -303,7 +366,8 @@ func rdar20868864(_ s: String) {
 func r22058555() {
   var firstChar: UInt8 = 0
   "abc".withCString { chars in
-    firstChar = chars[0]  // expected-error {{cannot assign value of type 'Int8' to type 'UInt8'}}
+    // FIXME https://bugs.swift.org/browse/SR-4836: was {{cannot assign value of type 'Int8' to type 'UInt8'}}
+    firstChar = chars[0]  // expected-error {{cannot subscript a value of incorrect or ambiguous type}}
   }
 }
 
@@ -395,3 +459,61 @@ let mismatchInClosureResultType : (String) -> ((Int) -> Void) = {
     return { }
     // expected-error@-1 {{contextual type for closure argument list expects 1 argument, which cannot be implicitly ignored}}
 }
+
+// SR-3520: Generic function taking closure with inout parameter can result in a variety of compiler errors or EXC_BAD_ACCESS
+func sr3520_1<T>(_ g: (inout T) -> Int) {}
+sr3520_1 { $0 = 1 } // expected-error {{cannot convert value of type '()' to closure result type 'Int'}}
+
+func sr3520_2<T>(_ item: T, _ update: (inout T) -> Void) {
+  var x = item
+  update(&x)
+}
+var sr3250_arg = 42
+sr3520_2(sr3250_arg) { $0 += 3 } // ok
+
+// This test makes sure that having closure with inout argument doesn't crash with member lookup
+struct S_3520 {
+  var number1: Int
+}
+func sr3520_set_via_closure<S, T>(_ closure: (inout S, T) -> ()) {}
+sr3520_set_via_closure({ $0.number1 = $1 }) // expected-error {{type of expression is ambiguous without more context}}
+
+// SR-1976/SR-3073: Inference of inout
+func sr1976<T>(_ closure: (inout T) -> Void) {}
+sr1976({ $0 += 2 }) // ok
+
+// SR-3073: UnresolvedDotExpr in single expression closure
+
+struct SR3073Lense<Whole, Part> {
+  let set: (inout Whole, Part) -> ()
+}
+struct SR3073 {
+  var number1: Int
+  func lenses() {
+    let _: SR3073Lense<SR3073, Int> = SR3073Lense(
+      set: { $0.number1 = $1 } // ok
+    )
+  }
+}
+
+// SR-3479: Segmentation fault and other error for closure with inout parameter
+func sr3497_unfold<A, B>(_ a0: A, next: (inout A) -> B) {}
+func sr3497() {
+  let _ = sr3497_unfold((0, 0)) { s in 0 } // ok
+}
+
+// SR-3758: Swift 3.1 fails to compile 3.0 code involving closures and IUOs
+let _: ((Any?) -> Void) = { (arg: Any!) in }
+// This example was rejected in 3.0 as well, but accepting it is correct.
+let _: ((Int?) -> Void) = { (arg: Int!) in }
+
+// rdar://30429709 - We should not attempt an implicit conversion from
+// () -> T to () -> Optional<()>.
+func returnsArray() -> [Int] { return [] }
+
+returnsArray().flatMap { $0 }.flatMap { }
+// expected-warning@-1 {{expression of type 'Int' is unused}}
+// expected-warning@-2 {{result of call to 'flatMap' is unused}}
+
+// rdar://problem/30271695
+_ = ["hi"].flatMap { $0.isEmpty ? nil : $0 }

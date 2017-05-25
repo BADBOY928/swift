@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -33,8 +33,8 @@ func countBitSet(_ num: Int) -> Int {
 public func run_BitCount(_ N: Int) {
   for _ in 1...100*N {
     // Check some results.
-    CheckResults(countBitSet(1) == 1, "Incorrect results in BitCount.")
-    CheckResults(countBitSet(2) == 1, "Incorrect results in BitCount.")
-    CheckResults(countBitSet(2457) == 6, "Incorrect results in BitCount.")
+    CheckResults(countBitSet(1) == 1)
+    CheckResults(countBitSet(2) == 1)
+    CheckResults(countBitSet(2457) == 6)
   }
 }

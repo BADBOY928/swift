@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -237,6 +237,87 @@ public func run_ArrayAppendToFromGeneric(_ N: Int) {
       for _ in 0..<8 {
         appendToFromGeneric(collection: &nums, sequence: other)
       }
+    }
+  }
+}
+
+// Append a single element array with the += operator
+@inline(never)
+public func run_ArrayPlusEqualSingleElementCollection(_ N: Int) {
+  for _ in 0..<N {
+    for _ in 0..<10 {
+       var nums = [Int]()
+       for _ in 0..<40_000 {
+         nums += [1]
+       }
+    }
+  }
+}
+
+// Append a five element array with the += operator
+@inline(never)
+public func run_ArrayPlusEqualFiveElementCollection(_ N: Int) {
+  for _ in 0..<N {
+    for _ in 0..<10 {
+       var nums = [Int]()
+       for _ in 0..<40_000 {
+         nums += [1, 2, 3, 4, 5]
+       }
+    }
+  }
+}
+
+@inline(never)
+public func appendThreeElements(_ a: inout [Int]) {
+  a += [1, 2, 3]
+}
+
+@inline(never)
+public func run_ArrayPlusEqualThreeElements(_ N: Int) {
+  for _ in 0..<(10_000 * N) {
+    var a: [Int] = []
+    appendThreeElements(&a)
+  }
+}
+
+// Append the utf8 elements of an ascii string to a [UInt8]
+@inline(never)
+public func run_ArrayAppendAscii(_ N: Int) {
+  let s = "the quick brown fox jumps over the lazy dog!"
+  for _ in 0..<N {
+    for _ in 0..<10 {
+       var nums = [UInt8]()
+       for _ in 0..<10_000 {
+         nums += s.utf8
+       }
+    }
+  }
+}
+
+// Append the utf8 elements of an ascii string to a [UInt8]
+@inline(never)
+public func run_ArrayAppendLatin1(_ N: Int) {
+  let s = "the quick brown fox jumps over the lazy dog\u{00A1}"
+  for _ in 0..<N {
+    for _ in 0..<10 {
+       var nums = [UInt8]()
+       for _ in 0..<10_000 {
+         nums += s.utf8
+       }
+    }
+  }
+}
+
+// Append the utf8 elements of an ascii string to a [UInt8]
+@inline(never)
+public func run_ArrayAppendUTF16(_ N: Int) {
+  let s = "the quick brown 🦊 jumps over the lazy dog"
+  for _ in 0..<N {
+    for _ in 0..<10 {
+       var nums = [UInt8]()
+       for _ in 0..<10_000 {
+         nums += s.utf8
+       }
     }
   }
 }

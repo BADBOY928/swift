@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -32,9 +32,11 @@ namespace swift {
   class Decl;
   class ValueDecl;
   class TypeDecl;
+  class ExtensionDecl;
   class Stmt;
   class Expr;
   class Type;
+
 
 /// An abstract class used to traverse the AST and provide source information.
 /// Visitation happens in source-order and compiler-generated semantic info,
@@ -92,9 +94,11 @@ public:
   /// \param CtorTyRef this is set when the entity is a reference to a
   /// \c ConstructorDecl, to point to the type declaration that the source
   /// refers to.
+  /// \param ExtTyRef this is set when the entity is a reference to a type loc
+  /// in \c ExtensionDecl.
   virtual bool visitDeclReference(ValueDecl *D, CharSourceRange Range,
-                                  TypeDecl *CtorTyRef, Type T,
-                                  SemaReferenceKind Kind);
+                                  TypeDecl *CtorTyRef, ExtensionDecl *ExtTyRef,
+                                  Type T, ReferenceMetaData Data);
 
   /// This method is called when a ValueDecl for a subscript is referenced in
   /// source. If it returns false, the remaining traversal is terminated
@@ -120,13 +124,26 @@ public:
   virtual bool visitCallArgName(Identifier Name, CharSourceRange Range,
                                 ValueDecl *D);
 
+  /// This method is called for each external argument name in function-like
+  /// declarations like constructor, function and subscript. The function is
+  /// called only when an external argument label is specifically specified,
+  /// like func foo(External Internal: Int) {}.
+  /// If it returns false, the remaining traversal is terminated and returns
+  /// failure.
+  ///
+  /// \param Name the argument name.
+  /// \param StartLoc the source loc of the argument name start.
+  /// \param D the function-like decl.
+  virtual bool visitDeclarationArgumentName(Identifier Name, SourceLoc StartLoc,
+                                            ValueDecl *D);
+
   /// This method is called when a Module is referenced in source.
   virtual bool visitModuleReference(ModuleEntity Mod, CharSourceRange Range);
 
   /// Whether walk into the inactive region in a #if config statement.
   virtual bool shouldWalkInactiveConfigRegion() { return false; }
 
-  virtual bool shouldWalkIntoFunctionGenericParams() { return true; }
+  virtual bool shouldWalkIntoGenericParams() { return true; }
 
 protected:
   SourceEntityWalker() = default;

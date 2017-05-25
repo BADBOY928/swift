@@ -2,7 +2,7 @@
 #
 # This source file is part of the Swift.org open source project
 #
-# Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+# Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 # Licensed under Apache License v2.0 with Runtime Library Exception
 #
 # See https://swift.org/LICENSE.txt for license information
@@ -25,6 +25,7 @@ set(SWIFTLIB_ESSENTIAL
   ArrayCast.swift
   Arrays.swift.gyb
   ArrayType.swift
+  ASCII.swift
   Assert.swift
   AssertCommon.swift
   BidirectionalCollection.swift
@@ -34,7 +35,9 @@ set(SWIFTLIB_ESSENTIAL
   Builtin.swift
   BuiltinMath.swift.gyb
   Character.swift
+  CharacterUnicodeScalars.swift
   CocoaArray.swift
+  Codable.swift
   Collection.swift
   CollectionAlgorithms.swift.gyb
   Comparable.swift
@@ -51,7 +54,6 @@ set(SWIFTLIB_ESSENTIAL
   ErrorType.swift
   Existential.swift
   Filter.swift.gyb
-  FixedPoint.swift.gyb
   FlatMap.swift
   Flatten.swift.gyb
   FloatingPoint.swift.gyb
@@ -63,23 +65,25 @@ set(SWIFTLIB_ESSENTIAL
   # if we do so, the compiler crashes.
   AnyHashable.swift
   # END WORKAROUND
-  HashedCollectionsAnyHashableExtensions.swift.gyb
+  HashedCollectionsAnyHashableExtensions.swift
   Hashing.swift
   HeapBuffer.swift
+  ICU.swift
   ImplicitlyUnwrappedOptional.swift
   Index.swift
   Indices.swift.gyb
   InputStream.swift
-  IntegerArithmetic.swift.gyb
-  IntegerParsing.swift.gyb
+  IntegerParsing.swift
   Integers.swift.gyb
   Join.swift
+  KeyPath.swift
   LazyCollection.swift.gyb
   LazySequence.swift
   LifetimeManager.swift
   ManagedBuffer.swift
   Map.swift.gyb
   MemoryLayout.swift
+  UnicodeScalar.swift # ORDER DEPENDENCY: Must precede Mirrors.swift
   Mirrors.swift.gyb
   Misc.swift
   MutableCollection.swift
@@ -102,6 +106,7 @@ set(SWIFTLIB_ESSENTIAL
   Reverse.swift
   Runtime.swift.gyb
   SipHash.swift.gyb
+  SentinelCollection.swift
   Sequence.swift
   SequenceAlgorithms.swift.gyb
   SequenceWrapper.swift
@@ -113,23 +118,26 @@ set(SWIFTLIB_ESSENTIAL
   StaticString.swift
   Stride.swift.gyb
   StringCharacterView.swift # ORDER DEPENDENCY: Must precede String.swift
+  StringHashable.swift  # ORDER DEPENDENCY: Must precede String.swift
   String.swift
   StringBridge.swift
   StringBuffer.swift
   StringComparable.swift
   StringCore.swift
-  StringHashable.swift
-  StringInterpolation.swift.gyb
+  StringInterpolation.swift
   StringLegacy.swift
   StringRangeReplaceableCollection.swift.gyb
   StringIndexConversions.swift
   StringUnicodeScalarView.swift
   StringUTF16.swift
   StringUTF8.swift
+  Substring.swift.gyb
   SwiftNativeNSArray.swift
+  ThreadLocalStorage.swift
+  UIntBuffer.swift
   UnavailableStringAPIs.swift.gyb
-  Unicode.swift
-  UnicodeScalar.swift
+  UnicodeEncoding.swift
+  UnicodeParser.swift
   UnicodeTrie.swift.gyb
   Unmanaged.swift
   UnsafeBitMap.swift
@@ -137,6 +145,11 @@ set(SWIFTLIB_ESSENTIAL
   UnsafeRawBufferPointer.swift.gyb
   UnsafePointer.swift.gyb
   UnsafeRawPointer.swift.gyb
+  UTFEncoding.swift
+  UTF8.swift
+  UTF16.swift
+  UTF32.swift
+  Unicode.swift # ORDER DEPENDENCY: must follow new unicode support
   WriteBackMutableSlice.swift
   )
 
@@ -165,6 +178,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
   list(APPEND swift_core_link_flags "-all_load")
   list(APPEND swift_core_framework_depends Foundation)
   list(APPEND swift_core_framework_depends CoreFoundation)
+  list(APPEND swift_core_private_link_libraries icucore)
 else()
   # With the GNU linker the equivalent of -all_load is to tell the linker
   # --whole-archive before the archive and --no-whole-archive after (without
@@ -178,7 +192,6 @@ else()
   #set(LINK_FLAGS
   #  -Wl,--whole-archive swiftRuntime -Wl,--no-whole-archive)
   if("${SWIFT_PATH_TO_LIBICU_BUILD}" STREQUAL "")
-    find_package(ICU REQUIRED COMPONENTS uc i18n)
     list(APPEND swift_core_private_link_libraries
       ICU_UC ICU_I18N)
   else()
@@ -206,6 +219,9 @@ option(SWIFT_CHECK_ESSENTIAL_STDLIB
 if(SWIFT_STDLIB_SIL_DEBUGGING)
   list(APPEND swift_stdlib_compile_flags "-Xfrontend" "-gsil")
 endif()
+
+list(APPEND swift_stdlib_compile_flags "-Xllvm" "-sil-inline-generics")
+list(APPEND swift_stdlib_compile_flags "-Xllvm" "-sil-partial-specialization")
 
 if(SWIFT_CHECK_ESSENTIAL_STDLIB)
   add_swift_library(swift_stdlib_essential ${SWIFT_STDLIB_LIBRARY_BUILD_TYPES} IS_STDLIB IS_STDLIB_CORE

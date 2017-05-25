@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -30,6 +30,11 @@ public:
 
   static AccessScope getPublic() { return AccessScope(nullptr); }
 
+  /// Check if private access is allowed. This is a lexical scope check in Swift
+  /// 3 mode. In Swift 4 mode, declarations and extensions of the same type will
+  /// also allow access.
+  static bool allowsPrivateAccess(const DeclContext *useDC, const DeclContext *sourceDC);
+
   /// Returns nullptr if access scope is public.
   const DeclContext *getDeclContext() const { return Value.getPointer(); }
 
@@ -48,7 +53,7 @@ public:
   /// \see DeclContext::isChildContextOf
   bool isChildOf(AccessScope AS) const {
     if (!isPublic() && !AS.isPublic())
-      return getDeclContext()->isChildContextOf(AS.getDeclContext());
+      return allowsPrivateAccess(getDeclContext(), AS.getDeclContext());
     if (isPublic() && AS.isPublic())
       return false;
     return AS.isPublic();

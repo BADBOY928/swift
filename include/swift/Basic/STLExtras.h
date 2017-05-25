@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -28,6 +28,45 @@
 #include <algorithm>
 
 namespace swift {
+
+//===----------------------------------------------------------------------===//
+//                              Function Traits
+//===----------------------------------------------------------------------===//
+
+template <class T>
+struct function_traits : function_traits<decltype(&T::operator())> {};
+
+// function
+template <class R, class... Args> struct function_traits<R(Args...)> {
+  using result_type = R;
+  using argument_types = std::tuple<Args...>;
+};
+
+// function pointer
+template <class R, class... Args> struct function_traits<R (*)(Args...)> {
+  using result_type = R;
+  using argument_types = std::tuple<Args...>;
+};
+
+// std::function
+template <class R, class... Args>
+struct function_traits<std::function<R(Args...)>> {
+  using result_type = R;
+  using argument_types = std::tuple<Args...>;
+};
+
+// pointer-to-member-function (i.e., operator()'s)
+template <class T, class R, class... Args>
+struct function_traits<R (T::*)(Args...)> {
+  using result_type = R;
+  using argument_types = std::tuple<Args...>;
+};
+
+template <class T, class R, class... Args>
+struct function_traits<R (T::*)(Args...) const> {
+  using result_type = R;
+  using argument_types = std::tuple<Args...>;
+};
 
 /// @{
 
@@ -196,6 +235,8 @@ inline Iterator prev_or_begin(Iterator it, Iterator begin) {
 /// @}
 
 /// A range of iterators.
+/// TODO: Add `llvm::iterator_range::empty()`, then remove this helper, along
+/// with the superfluous FilterIterator and TransformIterator.
 template<typename Iterator>
 class IteratorRange {
   Iterator First, Last;
@@ -367,17 +408,15 @@ class TransformIterator {
 
   /// The underlying reference type, which will be passed to the
   /// operation.
-  typedef typename std::iterator_traits<Iterator>::reference
-    UnderlyingReference;
- 
+  using OpTraits = function_traits<Operation>;
+
 public:
-  typedef std::forward_iterator_tag iterator_category;
-  typedef typename std::result_of<Operation(UnderlyingReference)>::type
-    value_type;
-  typedef value_type reference;
-  typedef void pointer; // FIXME: Should provide a pointer proxy.
-  typedef typename std::iterator_traits<Iterator>::difference_type 
-    difference_type;
+  using iterator_category = std::forward_iterator_tag;
+  using value_type = typename OpTraits::result_type;
+  using reference = value_type;
+  using pointer = void; // FIXME: Should provide a pointer proxy.
+  using difference_type =
+      typename std::iterator_traits<Iterator>::difference_type;
 
   /// Construct a new transforming iterator for the given iterator 
   /// and operation.
@@ -704,47 +743,21 @@ inline bool is_sorted_and_uniqued(const Container &C) {
   return is_sorted_and_uniqued(C.begin(), C.end());
 }
 
-//===----------------------------------------------------------------------===//
-//                              Function Traits
-//===----------------------------------------------------------------------===//
+template <typename Container, typename OutputIterator>
+inline void copy(const Container &C, OutputIterator iter) {
+  std::copy(C.begin(), C.end(), iter);
+}
 
-template<class T>
-struct function_traits : function_traits<decltype(&T::operator())> {
-};
+template <typename Container, typename OutputIterator, typename Predicate>
+inline void copy_if(const Container &C, OutputIterator result, Predicate pred) {
+  std::copy_if(C.begin(), C.end(), result, pred);
+}
 
-// function
-template<class R, class... Args>
-struct function_traits<R(Args...)> {
-  using result_type = R;
-  using argument_types = std::tuple<Args...>;
-};
-
-// function pointer
-template<class R, class... Args>
-struct function_traits<R (*)(Args...)> {
-  using result_type = R;
-  using argument_types = std::tuple<Args...>;
-};
-
-// std::function
-template<class R, class... Args>
-struct function_traits<std::function<R(Args...)>> {
-  using result_type = R;
-  using argument_types = std::tuple<Args...>;
-};
-
-// pointer-to-member-function (i.e., operator()'s)
-template<class T, class R, class... Args>
-struct function_traits<R (T::*)(Args...)> {
-  using result_type = R;
-  using argument_types = std::tuple<Args...>;
-};
-
-template<class T, class R, class... Args>
-struct function_traits<R (T::*)(Args...) const> {
-  using result_type = R;
-  using argument_types = std::tuple<Args...>;
-};
+template <typename Container, typename OutputIterator, typename UnaryOperation>
+inline OutputIterator transform(const Container &C, OutputIterator result,
+                                UnaryOperation op) {
+  return std::transform(C.begin(), C.end(), result, op);
+}
 
 } // end namespace swift
 

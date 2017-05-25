@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -54,9 +54,9 @@ bool DestructorAnalysis::isSafeType(CanType Ty) {
   cacheResult(Ty, true);
 
   // Trivial value types.
-  if (Ty->getKind() == TypeKind::BuiltinInteger)
+  if (Ty->is<BuiltinIntegerType>())
     return cacheResult(Ty, true);
-  if (Ty->getKind() == TypeKind::BuiltinFloat)
+  if (Ty->is<BuiltinFloatType>())
     return cacheResult(Ty, true);
 
   // A struct is safe if

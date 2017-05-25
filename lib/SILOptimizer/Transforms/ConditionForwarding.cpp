@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -115,7 +115,6 @@ private:
     }
   }
 
-  StringRef getName() override { return "ConditionForwarding"; }
 };
 
 /// Returns true if all instructions of block \p BB are safe to be moved
@@ -150,7 +149,7 @@ static bool hasNoRelevantSideEffects(SILBasicBlock *BB) {
 bool ConditionForwarding::tryOptimize(SwitchEnumInst *SEI) {
   // The switch_enum argument (an Enum) must be a block argument at the merging
   // point of the condition's destinations.
-  SILArgument *Arg = dyn_cast<SILArgument>(SEI->getOperand());
+  auto *Arg = dyn_cast<SILArgument>(SEI->getOperand());
   if (!Arg)
     return false;
 
@@ -242,7 +241,8 @@ bool ConditionForwarding::tryOptimize(SwitchEnumInst *SEI) {
       SILArgument *NewArg = nullptr;
       if (NeedEnumArg.insert(UseBlock).second) {
         // The first Enum use in this UseBlock.
-        NewArg = UseBlock->createPHIArgument(Arg->getType());
+        NewArg = UseBlock->createPHIArgument(Arg->getType(),
+                                             ValueOwnershipKind::Owned);
       } else {
         // We already inserted the Enum argument for this UseBlock.
         assert(UseBlock->getNumArguments() >= 1);

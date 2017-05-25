@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -74,10 +74,14 @@ bool types::isTextual(ID Id) {
   case types::TY_LLVM_IR:
   case types::TY_ObjCHeader:
   case types::TY_AutolinkFile:
+  case types::TY_ImportedModules:
+  case types::TY_TBD:
+  case types::TY_ModuleTrace:
     return true;
   case types::TY_Image:
   case types::TY_Object:
   case types::TY_dSYM:
+  case types::TY_PCH:
   case types::TY_SIB:
   case types::TY_RawSIB:
   case types::TY_SwiftModuleFile:
@@ -105,6 +109,9 @@ bool types::isAfterLLVM(ID Id) {
   case types::TY_Object:
     return true;
   case types::TY_Swift:
+  case types::TY_PCH:
+  case types::TY_ImportedModules:
+  case types::TY_TBD:
   case types::TY_SIL:
   case types::TY_Dependencies:
   case types::TY_RawSIL:
@@ -121,6 +128,7 @@ bool types::isAfterLLVM(ID Id) {
   case types::TY_SwiftDeps:
   case types::TY_Nothing:
   case types::TY_Remapping:
+  case types::TY_ModuleTrace:
     return false;
   case types::TY_INVALID:
     llvm_unreachable("Invalid type ID.");
@@ -145,6 +153,9 @@ bool types::isPartOfSwiftCompilation(ID Id) {
   case types::TY_Dependencies:
   case types::TY_ObjCHeader:
   case types::TY_AutolinkFile:
+  case types::TY_PCH:
+  case types::TY_ImportedModules:
+  case types::TY_TBD:
   case types::TY_Image:
   case types::TY_dSYM:
   case types::TY_SwiftModuleFile:
@@ -154,6 +165,7 @@ bool types::isPartOfSwiftCompilation(ID Id) {
   case types::TY_SwiftDeps:
   case types::TY_Nothing:
   case types::TY_Remapping:
+  case types::TY_ModuleTrace:
     return false;
   case types::TY_INVALID:
     llvm_unreachable("Invalid type ID.");

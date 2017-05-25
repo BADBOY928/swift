@@ -1,6 +1,4 @@
-// RUN: %target-typecheck-verify-swift
-
-import Swift
+// RUN: %target-typecheck-verify-swift -swift-version 4
 
 ////
 // Members of structs
@@ -29,7 +27,9 @@ func g0(_: (inout X) -> (Float) -> ()) {}
 
 _ = x.f0(i)
 x.f0(i).f1(i)
+
 g0(X.f1)
+
 _ = x.f0(x.f2(1))
 _ = x.f0(1).f2(i)
 _ = yf.f0(1)
@@ -86,9 +86,6 @@ var zcurriedFull = z.curried(0)(1)
 
 // Module
 Swift.print(3, terminator: "")
-
-var format : String
-_ = format._splitFirstIf({ $0.isASCII })
 
 ////
 // Unqualified references

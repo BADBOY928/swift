@@ -30,8 +30,8 @@ func funcdecl5(_ a: Int, y: Int) {
   if (x != 0) {
     if (x != 0 || f3() != 0) {
       // while with and without a space after it.
-      while(true) { 4; 2; 1 } // expected-warning {{result of call to 'init(_builtinIntegerLiteral:)' is unused}} expected-warning {{result of call to 'init(_builtinIntegerLiteral:)' is unused}} expected-warning {{result of call to 'init(_builtinIntegerLiteral:)' is unused}}
-      while (true) { 4; 2; 1 } // expected-warning {{result of call to 'init(_builtinIntegerLiteral:)' is unused}} expected-warning {{result of call to 'init(_builtinIntegerLiteral:)' is unused}} expected-warning {{result of call to 'init(_builtinIntegerLiteral:)' is unused}}
+      while(true) { 4; 2; 1 } // expected-warning 3 {{integer literal is unused}}
+      while (true) { 4; 2; 1 } // expected-warning 3 {{integer literal is unused}}
     }
   }
 
@@ -159,7 +159,7 @@ func missing_semicolons() {
   var w = 321
   func g() {}
   g() w += 1             // expected-error{{consecutive statements}} {{6-6=;}}
-  var z = w"hello"    // expected-error{{consecutive statements}} {{12-12=;}} expected-warning {{expression of type 'String' is unused}}
+  var z = w"hello"    // expected-error{{consecutive statements}} {{12-12=;}} expected-warning {{string literal is unused}}
   class  C {}class  C2 {} // expected-error{{consecutive statements}} {{14-14=;}}
   struct S {}struct S2 {} // expected-error{{consecutive statements}} {{14-14=;}}
   func j() {}func k() {}  // expected-error{{consecutive statements}} {{14-14=;}}
@@ -247,7 +247,7 @@ func RepeatWhileStmt4() {
 
 func brokenSwitch(_ x: Int) -> Int {
   switch x {
-  case .Blah(var rep): // expected-error{{enum case 'Blah' not found in type 'Int'}}
+  case .Blah(var rep): // expected-error{{pattern cannot match values of type 'Int'}}
     return rep
   }
 }
@@ -257,6 +257,7 @@ func switchWithVarsNotMatchingTypes(_ x: Int, y: Int, z: String) -> Int {
   case (let a, 0, _), (0, let a, _): // OK
     return a
   case (let a, _, _), (_, _, let a): // expected-error {{pattern variable bound to type 'String', expected type 'Int'}}
+  // expected-warning@-1 {{case is already handled by previous patterns; consider removing it}}
     return a
   }
 }
@@ -266,8 +267,8 @@ func breakContinue(_ x : Int) -> Int {
 Outer:
   for _ in 0...1000 {
 
-  Switch:
-    switch x {
+  Switch: // expected-error {{switch must be exhaustive}} expected-note{{do you want to add a default clause?}}
+  switch x {
     case 42: break Outer
     case 97: continue Outer
     case 102: break Switch
@@ -298,7 +299,8 @@ Loop:  // expected-note {{previously declared here}}
   let x : Int? = 42
   
   // <rdar://problem/16879701> Should be able to pattern match 'nil' against optionals
-  switch x {
+  switch x { // expected-error {{switch must be exhaustive}}
+  // expected-note@-1 {{missing case: '.some(_)'}}
   case .some(42): break
   case nil: break
   
@@ -382,7 +384,8 @@ func test_is_as_patterns() {
   switch 4 {
   case is Int: break        // expected-warning {{'is' test is always true}}
   case _ as Int: break  // expected-warning {{'as' test is always true}}
-  case _: break
+  // expected-warning@-1 {{case is already handled by previous patterns; consider removing it}}
+  case _: break // expected-warning {{case is already handled by previous patterns; consider removing it}}
   }
 }
 
@@ -450,7 +453,8 @@ enum Type {
   case Bar
 }
 func r25178926(_ a : Type) {
-  switch a {
+  switch a { // expected-error {{switch must be exhaustive}}
+  // expected-note@-1 {{missing case: '.Bar'}}
   case .Foo, .Bar where 1 != 100:
     // expected-warning @-1 {{'where' only applies to the second pattern match in this case}}
     // expected-note @-2 {{disambiguate by adding a line break between them if this is desired}} {{14-14=\n       }}
@@ -458,18 +462,22 @@ func r25178926(_ a : Type) {
     break
   }
 
-  switch a {
+  switch a { // expected-error {{switch must be exhaustive}}
+  // expected-note@-1 {{missing case: '.Bar'}}
   case .Foo: break
   case .Bar where 1 != 100: break
   }
 
-  switch a {
+  switch a { // expected-error {{switch must be exhaustive}}
+  // expected-note@-1 {{missing case: '.Bar'}}
   case .Foo,  // no warn
        .Bar where 1 != 100:
     break
   }
 
-  switch a {
+  switch a { // expected-error {{switch must be exhaustive}}
+  // expected-note@-1 {{missing case: '.Foo'}}
+  // expected-note@-2 {{missing case: '.Bar'}}
   case .Foo where 1 != 100, .Bar where 1 != 100:
     break
   }

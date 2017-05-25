@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -185,7 +185,7 @@ printTypeInterface(ModuleDecl *M, StringRef TypeUSR, ASTPrinter &Printer,
                             Printer, TypeName, Error);
 }
 
-void swift::ide::printModuleInterface(Module *M, Optional<StringRef> Group,
+void swift::ide::printModuleInterface(ModuleDecl *M, Optional<StringRef> Group,
                                       ModuleTraversalOptions TraversalOptions,
                                       ASTPrinter &Printer,
                                       const PrintOptions &Options,
@@ -210,7 +210,7 @@ static void adjustPrintOptions(PrintOptions &AdjustedOptions) {
 }
 
 ArrayRef<StringRef>
-swift::ide::collectModuleGroups(Module *M, std::vector<StringRef> &Scratch) {
+swift::ide::collectModuleGroups(ModuleDecl *M, std::vector<StringRef> &Scratch) {
   for (auto File : M->getFiles()) {
     File->collectAllGroups(Scratch);
   }
@@ -255,7 +255,7 @@ swift::ide::findGroupNameForUSR(ModuleDecl *M, StringRef USR) {
 }
 
 void swift::ide::printSubmoduleInterface(
-       Module *M,
+       ModuleDecl *M,
        ArrayRef<StringRef> FullModuleName,
        ArrayRef<StringRef> GroupNames,
        ModuleTraversalOptions TraversalOptions,
@@ -450,12 +450,12 @@ void swift::ide::printSubmoduleInterface(
 
   // Sort imported declarations in source order *within a submodule*.
   for (auto &P : ClangDecls) {
-    std::sort(P.second.begin(), P.second.end(),
-              [&](std::pair<Decl *, clang::SourceLocation> LHS,
-                  std::pair<Decl *, clang::SourceLocation> RHS) -> bool {
-                return ClangSourceManager.isBeforeInTranslationUnit(LHS.second,
-                                                                    RHS.second);
-              });
+    std::stable_sort(P.second.begin(), P.second.end(),
+                     [&](std::pair<Decl *, clang::SourceLocation> LHS,
+                         std::pair<Decl *, clang::SourceLocation> RHS) -> bool {
+      return ClangSourceManager.isBeforeInTranslationUnit(LHS.second,
+                                                          RHS.second);
+    });
   }
 
   // Sort Swift declarations so that we print them in a consistent order.

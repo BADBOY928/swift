@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -24,15 +24,18 @@ using namespace swift;
 //===----------------------------------------------------------------------===//
 
 SILArgument::SILArgument(ValueKind ChildKind, SILBasicBlock *ParentBB,
-                         SILType Ty, const ValueDecl *D)
-    : ValueBase(ChildKind, Ty), ParentBB(ParentBB), Decl(D) {
+                         SILType Ty, ValueOwnershipKind OwnershipKind,
+                         const ValueDecl *D)
+    : ValueBase(ChildKind, Ty), ParentBB(ParentBB), Decl(D),
+      OwnershipKind(OwnershipKind) {
   ParentBB->insertArgument(ParentBB->args_end(), this);
 }
 
 SILArgument::SILArgument(ValueKind ChildKind, SILBasicBlock *ParentBB,
                          SILBasicBlock::arg_iterator Pos, SILType Ty,
+                         ValueOwnershipKind OwnershipKind,
                          const ValueDecl *D)
-    : ValueBase(ChildKind, Ty), ParentBB(ParentBB), Decl(D) {
+    : ValueBase(ChildKind, Ty), ParentBB(ParentBB), Decl(D), OwnershipKind(OwnershipKind) {
   // Function arguments need to have a decl.
   assert(
     !ParentBB->getParent()->isBare() &&
@@ -83,6 +86,8 @@ static SILValue getIncomingValueForPred(const SILBasicBlock *BB,
     return cast<const CondBranchInst>(TI)->getArgForDestBB(BB, Index);
   case TermKind::CheckedCastBranchInst:
     return cast<const CheckedCastBranchInst>(TI)->getOperand();
+  case TermKind::CheckedCastValueBranchInst:
+    return cast<const CheckedCastValueBranchInst>(TI)->getOperand();
   case TermKind::SwitchEnumInst:
     return cast<const SwitchEnumInst>(TI)->getOperand();
   }

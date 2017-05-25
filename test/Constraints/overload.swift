@@ -186,3 +186,39 @@ func overloadedMethod<T>() {}
 
 overloadedMethod()
 // expected-error@-1 {{missing argument for parameter 'n' in call}}
+
+// Ensure we select the overload of '??' returning T? rather than T.
+func SR3817(_ d: [String : Any], _ s: String, _ t: String) -> Any {
+  if let r = d[s] ?? d[t] {
+    return r
+  } else {
+    return 0
+  }
+}
+
+// Overloading with mismatched labels.
+func f6<T>(foo: T) { }
+func f6<T: P1>(bar: T) { }
+
+struct X6 {
+	init<T>(foo: T) { }
+	init<T: P1>(bar: T) { }
+}
+
+func test_f6() {
+	let _: (X1a) -> Void = f6
+	let _: (X1a) -> X6 = X6.init
+}
+
+func curry<LHS, RHS, R>(_ f: @escaping (LHS, RHS) -> R) -> (LHS) -> (RHS) -> R {
+  return { lhs in { rhs in f(lhs, rhs) } }
+}
+
+// We need to have an alternative version of this to ensure that there's an overload disjunction created.
+func curry<F, S, T, R>(_ f: @escaping (F, S, T) -> R) -> (F) -> (S) -> (T) -> R {
+  return { fst in { snd in { thd in f(fst, snd, thd) } } }
+}
+
+// Ensure that we consider these unambiguous
+let _ = curry(+)(1)
+let _ = [0].reduce(0, +)

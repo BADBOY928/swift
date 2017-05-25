@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -12,6 +12,7 @@
 
 #define DEBUG_TYPE "sil-inst-utils"
 #include "swift/SIL/InstructionUtils.h"
+#include "swift/AST/SubstitutionMap.h"
 #include "swift/Basic/NullablePtr.h"
 #include "swift/SIL/Projection.h"
 #include "swift/SIL/SILArgument.h"
@@ -66,6 +67,7 @@ static bool isRCIdentityPreservingCast(ValueKind Kind) {
     case ValueKind::UncheckedRefCastInst:
     case ValueKind::UncheckedRefCastAddrInst:
     case ValueKind::UnconditionalCheckedCastInst:
+    case ValueKind::UnconditionalCheckedCastValueInst:
     case ValueKind::RefToBridgeObjectInst:
     case ValueKind::BridgeObjectToRefInst:
       return true;
@@ -309,4 +311,6 @@ bool FunctionOwnershipEvaluator::evaluate(SILInstruction *I) {
     return true;
   }
   }
+
+  llvm_unreachable("Unhandled OwnershipQualifiedKind in switch.");
 }

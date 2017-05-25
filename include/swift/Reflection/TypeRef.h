@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -21,7 +21,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/Casting.h"
 #include "swift/ABI/MetadataValues.h"
-#include "swift/Basic/Unreachable.h"
+#include "swift/Runtime/Unreachable.h"
 
 #include <iostream>
 
@@ -396,12 +396,8 @@ public:
     FIND_OR_CREATE_TYPEREF(A, ProtocolTypeRef, MangledName);
   }
 
-  bool isAnyObject() const {
-    return MangledName == "Ps9AnyObject_";
-  }
-
   bool isError() const {
-    return MangledName == "Ps5Error_";
+    return MangledName == "s5Error_p";
   }
 
   const std::string &getMangledName() const {
@@ -421,28 +417,39 @@ public:
 };
 
 class ProtocolCompositionTypeRef final : public TypeRef {
-  std::vector<const TypeRef *> Protocols;
+  std::vector<const TypeRef *> Members;
+  bool HasExplicitAnyObject;
 
-  static TypeRefID Profile(const std::vector<const TypeRef *> &Protocols) {
+  static TypeRefID Profile(const std::vector<const TypeRef *> &Members,
+                           bool HasExplicitAnyObject) {
     TypeRefID ID;
-    for (auto Protocol : Protocols) {
-      ID.addPointer(Protocol);
+    ID.addInteger((uint32_t)HasExplicitAnyObject);
+    for (auto Member : Members) {
+      ID.addPointer(Member);
     }
     return ID;
   }
 
 public:
-  ProtocolCompositionTypeRef(std::vector<const TypeRef *> Protocols)
-    : TypeRef(TypeRefKind::ProtocolComposition), Protocols(Protocols) {}
+  ProtocolCompositionTypeRef(std::vector<const TypeRef *> Members,
+                            bool HasExplicitAnyObject)
+    : TypeRef(TypeRefKind::ProtocolComposition),
+      Members(Members), HasExplicitAnyObject(HasExplicitAnyObject) {}
 
   template <typename Allocator>
   static const ProtocolCompositionTypeRef *
-  create(Allocator &A, std::vector<const TypeRef *> Protocols) {
-    FIND_OR_CREATE_TYPEREF(A, ProtocolCompositionTypeRef, Protocols);\
+  create(Allocator &A, std::vector<const TypeRef *> Members,
+        bool HasExplicitAnyObject) {
+    FIND_OR_CREATE_TYPEREF(A, ProtocolCompositionTypeRef, Members,
+                           HasExplicitAnyObject);
   }
 
-  const std::vector<const TypeRef *> &getProtocols() const {
-    return Protocols;
+  const std::vector<const TypeRef *> &getMembers() const {
+    return Members;
+  }
+
+  bool hasExplicitAnyObject() const {
+    return HasExplicitAnyObject;
   }
 
   static bool classof(const TypeRef *TR) {
@@ -783,7 +790,7 @@ public:
 #include "swift/Reflection/TypeRefs.def"
     }
 
-    swift_unreachable("Unhandled TypeRefKind in switch.");
+    swift_runtime_unreachable("Unhandled TypeRefKind in switch.");
   }
 };
 

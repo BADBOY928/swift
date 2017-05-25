@@ -9,7 +9,8 @@ enum E {
 
   static func testE(e: E) {
     switch e {
-    case A<UndefinedTy>(): // expected-error {{use of undeclared type 'UndefinedTy'}}
+    case A<UndefinedTy>(): // expected-error {{cannot specialize a non-generic definition}}
+    // expected-note@-1 {{while parsing this '<' as a type parameter bracket}}
       break
     case B<Int>(): // expected-error {{cannot specialize a non-generic definition}} expected-note {{while parsing this '<' as a type parameter bracket}}
       break
@@ -21,7 +22,8 @@ enum E {
 
 func testE(e: E) {
   switch e {
-  case E.A<UndefinedTy>(): // expected-error {{use of undeclared type 'UndefinedTy'}}
+  case E.A<UndefinedTy>(): // expected-error {{cannot specialize a non-generic definition}}
+  // expected-note@-1 {{while parsing this '<' as a type parameter bracket}}
     break
   case E.B<Int>(): // expected-error {{cannot specialize a non-generic definition}} expected-note {{while parsing this '<' as a type parameter bracket}}
     break
@@ -37,7 +39,7 @@ func testE(e: E) {
   guard
     // Currently, these will be asserted in SILGen,
     // or in no-assert build, verify-failed in IRGen
-    case .C() = e, // FIXME: Should be rejeceted.
+    case .C() = e, // FIXME: Should be rejected.
     case .D(let payload) = e // FIXME: ditto.
   else { return }
 }
@@ -49,7 +51,7 @@ func canThrow() throws {
 
 do {
   try canThrow()
-} catch E.A() { // FIXME: Should be rejeceted.
+} catch E.A() { // FIXME: Should be rejected.
   // ..
 } catch E.B(let payload) { // FIXME: ditto.
   let _: () = payload

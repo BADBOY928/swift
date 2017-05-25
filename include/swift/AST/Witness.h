@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -19,7 +19,7 @@
 #define SWIFT_AST_WITNESS_H
 
 #include "swift/AST/ConcreteDeclRef.h"
-#include "swift/AST/SubstitutionMap.h"
+#include "swift/AST/SubstitutionList.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/Support/Compiler.h"
 
@@ -93,7 +93,7 @@ class Witness {
     /// the witness declaration from the synthetic environment.
     ConcreteDeclRef declRef;
     GenericEnvironment *syntheticEnvironment;
-    SubstitutionMap reqToSyntheticEnvMap;
+    SubstitutionList reqToSyntheticEnvSubs;
   };
 
   llvm::PointerUnion<ValueDecl *, StoredWitness *> storage;
@@ -108,6 +108,16 @@ public:
   /// not generic (excepting \c Self)  and the conforming type is non-generic.
   Witness(ValueDecl *witness) : storage(witness) { assert(witness != nullptr); }
 
+  /// Create an opaque witness for the given requirement.
+  ///
+  /// This indicates that a witness exists, but is not visible to the current
+  /// module.
+  static Witness forOpaque(ValueDecl *requirement) {
+    // TODO: It's probably a good idea to have a separate 'opaque' bit.
+    // Making req == witness is kind of a hack.
+    return Witness(requirement);
+  }
+
   /// Create a witness that requires substitutions.
   ///
   /// \param decl The declaration for the witness.
@@ -117,11 +127,12 @@ public:
   ///
   /// \param syntheticEnv The synthetic environment.
   ///
-  /// \param reqToSyntheticEnvMap The mapping from the interface types of the
+  /// \param reqToSyntheticEnvSubs The mapping from the interface types of the
   /// requirement into the interface types of the synthetic environment.
-  Witness(ValueDecl *decl, ArrayRef<Substitution> substitutions,
+  Witness(ValueDecl *decl,
+          SubstitutionList substitutions,
           GenericEnvironment *syntheticEnv,
-          SubstitutionMap reqToSyntheticEnvMap);
+          SubstitutionList reqToSyntheticEnvSubs);
 
   /// Retrieve the witness declaration reference, which includes the
   /// substitutions needed to use the witness from the synthetic environment
@@ -154,7 +165,7 @@ public:
   ///
   /// The substitutions are substitutions for the witness, providing interface
   /// types from the synthetic environment.
-  ArrayRef<Substitution> getSubstitutions() const {
+  SubstitutionList getSubstitutions() const {
     return getDeclRef().getSubstitutions();
   }
 
@@ -166,9 +177,9 @@ public:
 
   /// Retrieve the substitution map that maps the interface types of the
   /// requirement to the interface types of the synthetic environment.
-  const SubstitutionMap &getRequirementToSyntheticMap() const {
+  SubstitutionList getRequirementToSyntheticSubs() const {
     assert(requiresSubstitution() && "No substitutions required for witness");
-    return storage.get<StoredWitness *>()->reqToSyntheticEnvMap;
+    return storage.get<StoredWitness *>()->reqToSyntheticEnvSubs;
   }
 
   LLVM_ATTRIBUTE_DEPRECATED(

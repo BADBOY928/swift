@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -57,7 +57,7 @@ struct TestOptions {
   bool structureOutput = false;
   ArrayRef<const char *> compilerArgs;
 };
-}
+} // end anonymous namespace
 static int handleTestInvocation(TestOptions &options);
 
 static sourcekitd_uid_t KeyRequest;
@@ -548,7 +548,7 @@ public:
     return OS;
   }
 };
-}
+} // end anonymous namespace
 
 static void printResponse(sourcekitd_response_t resp, bool raw, bool structure,
                           unsigned indentation) {

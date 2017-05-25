@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -68,8 +68,7 @@ DebugAAKinds("aa-kind", llvm::cl::desc("Alias Analysis Kinds:"),
                                          "typed-access-tb-aa"),
                               clEnumValN(AAKind::All,
                                          "all",
-                                         "all"),
-                              clEnumValEnd));
+                                         "all")));
 
 static inline bool shouldRunAA() {
   return unsigned(AAKind(DebugAAKinds));
@@ -749,7 +748,7 @@ bool swift::isLetPointer(SILValue V) {
 
 
   // Check if a parent of a tuple is a "let"
-  if (TupleElementAddrInst *TEA = dyn_cast<TupleElementAddrInst>(V))
+  if (auto *TEA = dyn_cast<TupleElementAddrInst>(V))
     return isLetPointer(TEA->getOperand());
 
   return false;

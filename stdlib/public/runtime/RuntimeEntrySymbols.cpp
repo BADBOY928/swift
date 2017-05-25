@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -36,6 +36,10 @@
 // implementations.
 #define FOR_CONV_DefaultCC(...)
 #define FOR_CONV_C_CC(...)
+
+// Entry points implemented in swift using the swift calling convention.
+#define FOR_CONV_SwiftCC(...)
+
 // Entry points using the new calling convention require global symbols
 // referring to their implementations.
 #define FOR_CONV_RegisterPreservingCC(x) x
@@ -48,7 +52,7 @@ typedef void (*RuntimeEntry)();
 #define DEFINE_SYMBOL(SymbolName, Name, CC)                                    \
   SWIFT_RT_ENTRY_IMPL_VISIBILITY extern "C" void Name()                        \
       SWIFT_CC(CC);                                                            \
-  SWIFT_RUNTIME_EXPORT extern "C" RuntimeEntry SymbolName =                    \
+  SWIFT_RUNTIME_EXPORT RuntimeEntry SymbolName =                    \
       reinterpret_cast<RuntimeEntry>(Name);
 
 #define FUNCTION1(Id, Name, CC, ReturnTys, ArgTys, Attrs)                      \

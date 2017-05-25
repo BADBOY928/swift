@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -229,7 +229,7 @@ void CheckedCastBrJumpThreading::Edit::modifyCFGForUnknownPreds() {
   // for method chaining code like obj.method1().method2().etc()
   auto *CCBI = cast<CheckedCastBranchInst>(CCBBlock->getTerminator());
   SILInstruction *Inst = &*CCBI->getFailureBB()->begin();
-  if (ClassMethodInst *CMI = dyn_cast<ClassMethodInst>(Inst)) {
+  if (auto *CMI = dyn_cast<ClassMethodInst>(Inst)) {
     if (CMI->getOperand() == stripClassCasts(CCBI->getOperand())) {
       // Replace checked_cast_br by branch to FailureBB.
       SILBuilder(CCBI->getParent()).createBranch(CCBI->getLoc(),
@@ -247,7 +247,7 @@ modifyCFGForFailurePreds(Optional<BasicBlockCloner> &Cloner) {
     return;
 
   assert(!Cloner.hasValue());
-  Cloner.emplace(BasicBlockCloner(CCBBlock));
+  Cloner.emplace(CCBBlock);
   Cloner->clone();
   SILBasicBlock *TargetFailureBB = Cloner->getDestBB();
   auto *TI = TargetFailureBB->getTerminator();
@@ -284,7 +284,7 @@ modifyCFGForSuccessPreds(Optional<BasicBlockCloner> &Cloner) {
       // Create a copy of the BB as a landing BB.
       // for all SuccessPreds.
       assert(!Cloner.hasValue());
-      Cloner.emplace(BasicBlockCloner(CCBBlock));
+      Cloner.emplace(CCBBlock);
       Cloner->clone();
       SILBasicBlock *TargetSuccessBB = Cloner->getDestBB();
       auto *TI = TargetSuccessBB->getTerminator();

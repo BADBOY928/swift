@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -27,6 +27,7 @@
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TinyPtrVector.h"
+#include "llvm/Support/Compiler.h"
 #include <functional>
 #include <utility>
 
@@ -55,10 +56,10 @@ namespace swift {
 /// Swift name, this will be recorded as
 class EffectiveClangContext {
 public:
-  enum Kind {
+  enum Kind : uint8_t {
     DeclContext,
     TypedefContext,
-    UnresolvedContext,
+    UnresolvedContext, // must be last
   };
 
 private:
@@ -69,15 +70,19 @@ private:
       const char *Data;
     } Unresolved;
   };
-  Kind TheKind;
-  unsigned UnresolvedLength;
-  
+
+  /// If KindOrBiasedLength < Kind::UnresolvedContext, this represents a Kind.
+  /// Otherwise it's (uintptr_t)Kind::UnresolvedContext plus the length of
+  /// Unresolved.Data.
+  uintptr_t KindOrBiasedLength;
+
 public:
-  EffectiveClangContext() : TheKind(DeclContext) {
+  EffectiveClangContext() : KindOrBiasedLength(DeclContext) {
     DC = nullptr;
   }
 
-  EffectiveClangContext(const clang::DeclContext *dc) : TheKind(DeclContext) {
+  EffectiveClangContext(const clang::DeclContext *dc)
+      : KindOrBiasedLength(DeclContext) {
     assert(dc != nullptr && "use null constructor instead");
     if (auto tagDecl = dyn_cast<clang::TagDecl>(dc)) {
       DC = tagDecl->getCanonicalDecl();
@@ -98,14 +103,13 @@ public:
   }
 
   EffectiveClangContext(const clang::TypedefNameDecl *typedefName)
-    : TheKind(TypedefContext)
-  {
+    : KindOrBiasedLength(TypedefContext) {
     Typedef = typedefName->getCanonicalDecl();
   }
 
-  EffectiveClangContext(StringRef unresolved) : TheKind(UnresolvedContext) {
+  EffectiveClangContext(StringRef unresolved)
+      : KindOrBiasedLength(UnresolvedContext + unresolved.size()) {
     Unresolved.Data = unresolved.data();
-    UnresolvedLength = unresolved.size();
   }
 
   /// Determine whether this effective Clang context was set.
@@ -114,7 +118,12 @@ public:
   }
 
   /// Determine the kind of effective Clang context.
-  Kind getKind() const { return TheKind; }
+  Kind getKind() const {
+    if (KindOrBiasedLength >= UnresolvedContext)
+      return UnresolvedContext;
+    return static_cast<Kind>(KindOrBiasedLength);
+
+  }
 
   /// Retrieve the declaration context.
   const clang::DeclContext *getAsDeclContext() const {
@@ -130,11 +139,26 @@ public:
   /// Retrieve the unresolved context name.
   StringRef getUnresolvedName() const {
     assert(getKind() == UnresolvedContext);
-    return StringRef(Unresolved.Data, UnresolvedLength);
+    return StringRef(Unresolved.Data, KindOrBiasedLength - UnresolvedContext);
+  }
+
+  /// Compares two EffectiveClangContexts without resolving unresolved names.
+  bool equalsWithoutResolving(const EffectiveClangContext &other) const {
+    if (getKind() != other.getKind())
+      return false;
+    switch (getKind()) {
+    case DeclContext:
+      return DC == other.DC;
+    case TypedefContext:
+      return Typedef == other.Typedef;
+    case UnresolvedContext:
+      return getUnresolvedName() == other.getUnresolvedName();
+    }
   }
 };
+
 static_assert(sizeof(EffectiveClangContext) <= 2 * sizeof(void *),
-              "should fit in a couple pointers");
+              "should be small");
 
 class SwiftLookupTableReader;
 class SwiftLookupTableWriter;

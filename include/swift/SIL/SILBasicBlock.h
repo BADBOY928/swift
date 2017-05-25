@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -17,6 +17,7 @@
 #ifndef SWIFT_SIL_BASICBLOCK_H
 #define SWIFT_SIL_BASICBLOCK_H
 
+#include "swift/Basic/Compiler.h"
 #include "swift/Basic/Range.h"
 #include "swift/Basic/TransformArrayRef.h"
 #include "swift/SIL/SILInstruction.h"
@@ -27,6 +28,7 @@ class SILFunction;
 class SILArgument;
 class SILPHIArgument;
 class SILFunctionArgument;
+class SILPrintContext;
 
 class SILBasicBlock :
 public llvm::ilist_node<SILBasicBlock>, public SILAllocated<SILBasicBlock> {
@@ -52,7 +54,8 @@ private:
   friend struct llvm::ilist_traits<SILBasicBlock>;
   SILBasicBlock() : Parent(nullptr) {}
   void operator=(const SILBasicBlock &) = delete;
-  void operator delete(void *Ptr, size_t) = delete;
+
+  void operator delete(void *Ptr, size_t) SWIFT_DELETE_OPERATOR_DELETED
 
   SILBasicBlock(SILFunction *F, SILBasicBlock *afterBB = nullptr);
 
@@ -74,9 +77,6 @@ public:
   /// This method unlinks 'self' from the containing SILFunction and deletes it.
   void eraseFromParent();
 
-  /// Returns true if this BB is the entry BB of its parent.
-  bool isEntry() const;
-
   //===--------------------------------------------------------------------===//
   // SILInstruction List Inspection and Manipulation
   //===--------------------------------------------------------------------===//
@@ -94,7 +94,7 @@ public:
   void push_back(SILInstruction *I);
   void push_front(SILInstruction *I);
   void remove(SILInstruction *I);
-  void erase(SILInstruction *I);
+  iterator erase(SILInstruction *I);
 
   SILInstruction &back() { return InstList.back(); }
   const SILInstruction &back() const {
@@ -174,55 +174,46 @@ public:
   /// Erase a specific argument from the arg list.
   void eraseArgument(int Index);
 
-  /// Replace the \p{i}th BB arg with a new BBArg with SILType \p Ty and
-  /// ValueDecl
-  /// \p D.
-  SILFunctionArgument *replaceFunctionArgument(unsigned i, SILType Ty,
-                                               const ValueDecl *D = nullptr);
-
   /// Allocate a new argument of type \p Ty and append it to the argument
   /// list. Optionally you can pass in a value decl parameter.
   SILFunctionArgument *createFunctionArgument(SILType Ty,
                                               const ValueDecl *D = nullptr);
 
-  /// Insert a new SILFunctionArgument with type \p Ty and \p Decl at position
-  /// \p Pos.
-  SILFunctionArgument *insertFunctionArgument(arg_iterator Pos, SILType Ty,
-                                              const ValueDecl *D = nullptr);
-
   SILFunctionArgument *insertFunctionArgument(unsigned Index, SILType Ty,
+                                              ValueOwnershipKind OwnershipKind,
                                               const ValueDecl *D = nullptr) {
     arg_iterator Pos = ArgumentList.begin();
     std::advance(Pos, Index);
-    return insertFunctionArgument(Pos, Ty, D);
+    return insertFunctionArgument(Pos, Ty, OwnershipKind, D);
   }
+
+  /// Replace the \p{i}th Function arg with a new Function arg with SILType \p
+  /// Ty and ValueDecl \p D.
+  SILFunctionArgument *replaceFunctionArgument(unsigned i, SILType Ty,
+                                               ValueOwnershipKind Kind,
+                                               const ValueDecl *D = nullptr);
 
   /// Replace the \p{i}th BB arg with a new BBArg with SILType \p Ty and
   /// ValueDecl
   /// \p D.
-  SILPHIArgument *
-  replacePHIArgument(unsigned i, SILType Ty,
-                     ValueOwnershipKind Kind = ValueOwnershipKind::Any,
-                     const ValueDecl *D = nullptr);
+  SILPHIArgument *replacePHIArgument(unsigned i, SILType Ty,
+                                     ValueOwnershipKind Kind,
+                                     const ValueDecl *D = nullptr);
 
   /// Allocate a new argument of type \p Ty and append it to the argument
   /// list. Optionally you can pass in a value decl parameter.
-  SILPHIArgument *
-  createPHIArgument(SILType Ty,
-                    ValueOwnershipKind Kind = ValueOwnershipKind::Any,
-                    const ValueDecl *D = nullptr);
+  SILPHIArgument *createPHIArgument(SILType Ty, ValueOwnershipKind Kind,
+                                    const ValueDecl *D = nullptr);
 
   /// Insert a new SILPHIArgument with type \p Ty and \p Decl at position \p
   /// Pos.
-  SILPHIArgument *
-  insertPHIArgument(arg_iterator Pos, SILType Ty,
-                    ValueOwnershipKind Kind = ValueOwnershipKind::Any,
-                    const ValueDecl *D = nullptr);
+  SILPHIArgument *insertPHIArgument(arg_iterator Pos, SILType Ty,
+                                    ValueOwnershipKind Kind,
+                                    const ValueDecl *D = nullptr);
 
-  SILPHIArgument *
-  insertPHIArgument(unsigned Index, SILType Ty,
-                    ValueOwnershipKind Kind = ValueOwnershipKind::Any,
-                    const ValueDecl *D = nullptr) {
+  SILPHIArgument *insertPHIArgument(unsigned Index, SILType Ty,
+                                    ValueOwnershipKind Kind,
+                                    const ValueDecl *D = nullptr) {
     arg_iterator Pos = ArgumentList.begin();
     std::advance(Pos, Index);
     return insertPHIArgument(Pos, Ty, Kind, D);
@@ -255,6 +246,33 @@ public:
   succ_iterator succ_end() { return getSuccessors().end(); }
   const_succ_iterator succ_begin() const { return getSuccessors().begin(); }
   const_succ_iterator succ_end() const { return getSuccessors().end(); }
+
+  using succblock_iterator =
+      TransformIterator<SILSuccessor *,
+                        std::function<SILBasicBlock *(const SILSuccessor &)>>;
+  using const_succblock_iterator = TransformIterator<
+      const SILSuccessor *,
+      std::function<const SILBasicBlock *(const SILSuccessor &)>>;
+  succblock_iterator succblock_begin() {
+    using FuncTy = std::function<SILBasicBlock *(const SILSuccessor &)>;
+    FuncTy F(&SILSuccessor::getBB);
+    return makeTransformIterator(getSuccessors().begin(), F);
+  }
+  succblock_iterator succblock_end() {
+    using FuncTy = std::function<SILBasicBlock *(const SILSuccessor &)>;
+    FuncTy F(&SILSuccessor::getBB);
+    return makeTransformIterator(getSuccessors().end(), F);
+  }
+  const_succblock_iterator succblock_begin() const {
+    using FuncTy = std::function<const SILBasicBlock *(const SILSuccessor &)>;
+    FuncTy F(&SILSuccessor::getBB);
+    return makeTransformIterator(getSuccessors().begin(), F);
+  }
+  const_succblock_iterator succblock_end() const {
+    using FuncTy = std::function<const SILBasicBlock *(const SILSuccessor &)>;
+    FuncTy F(&SILSuccessor::getBB);
+    return makeTransformIterator(getSuccessors().end(), F);
+  }
 
   SILBasicBlock *getSingleSuccessorBlock() {
     if (succ_empty() || std::next(succ_begin()) != succ_end())
@@ -295,7 +313,7 @@ public:
     return makeTransformRange(getSuccessors(), F);
   }
 
-  using pred_iterator = SILSuccessorIterator;
+  using pred_iterator = SILSuccessor::pred_iterator;
 
   bool pred_empty() const { return PredList == nullptr; }
   pred_iterator pred_begin() const { return pred_iterator(PredList); }
@@ -322,6 +340,20 @@ public:
   }
 
   //===--------------------------------------------------------------------===//
+  // Utility
+  //===--------------------------------------------------------------------===//
+
+  /// Returns true if this BB is the entry BB of its parent.
+  bool isEntry() const;
+
+  /// Returns true if this block ends in an unreachable or an apply of a
+  /// no-return apply or builtin.
+  bool isNoReturn() const;
+
+  /// Returns true if this instruction only contains a branch instruction.
+  bool isTrampoline() const;
+
+  //===--------------------------------------------------------------------===//
   // Debugging
   //===--------------------------------------------------------------------===//
 
@@ -330,6 +362,9 @@ public:
 
   /// Pretty-print the SILBasicBlock with the designated stream.
   void print(llvm::raw_ostream &OS) const;
+
+  /// Pretty-print the SILBasicBlock with the designated stream and context.
+  void print(llvm::raw_ostream &OS, SILPrintContext &Ctx) const;
 
   void printAsOperand(raw_ostream &OS, bool PrintType = true);
 
@@ -352,6 +387,12 @@ private:
   void insertArgument(arg_iterator Iter, SILArgument *Arg) {
     ArgumentList.insert(Iter, Arg);
   }
+
+  /// Insert a new SILFunctionArgument with type \p Ty and \p Decl at position
+  /// \p Pos.
+  SILFunctionArgument *insertFunctionArgument(arg_iterator Pos, SILType Ty,
+                                              ValueOwnershipKind OwnershipKind,
+                                              const ValueDecl *D = nullptr);
 };
 
 inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,

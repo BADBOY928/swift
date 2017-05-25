@@ -16,6 +16,8 @@ case (0..<10, _, _),
      (0...9, _, _),
      (0...9, 2.5, "three"):
   ()
+default:
+  ()
 }
 
 switch (1, 2) {
@@ -55,6 +57,8 @@ case is B,
   ()
 case is E:
   ()
+default:
+  ()
 }
 
 switch bp {
@@ -67,6 +71,8 @@ case let s as S:
   s.s()
 case let e as E:
   e.e()
+default:
+  ()
 }
 
 // Super-to-subclass.
@@ -75,6 +81,8 @@ switch db {
 case is D:
   ()
 case is E: // expected-warning {{always fails}}
+  ()
+default:
   ()
 }
 
@@ -114,7 +122,8 @@ case iPadHair.HairForceOne: // expected-error{{generic enum type 'iPadHair' is a
   ()
 case Watch.Edition: // TODO: should warn that cast can't succeed with currently known conformances
   ()
-case .HairForceOne: // expected-error{{enum case 'HairForceOne' not found in type 'HairType'}}
+// TODO: Bad error message
+case .HairForceOne: // expected-error{{cannot convert}}
   ()
 default:
   break
@@ -123,7 +132,7 @@ default:
 
 // <rdar://problem/19382878> Introduce new x? pattern
 switch Optional(42) {
-case let x?: break
+case let x?: break // expected-warning{{immutable value 'x' was never used; consider replacing with '_' or removing it}}
 case nil: break
 }
 
@@ -149,8 +158,8 @@ case let x???: print(x, terminator: "")
 case let x??: print(x as Any, terminator: "")
 case let x?: print(x as Any, terminator: "")
 case 4???: break
-case nil??: break
-case nil?: break
+case nil??: break // expected-warning {{case is already handled by previous patterns; consider removing it}}
+case nil?: break // expected-warning {{case is already handled by previous patterns; consider removing it}}
 default: break
 }
 
@@ -174,6 +183,7 @@ func ~= <T : Equatable>(lhs: T?, rhs: T?) -> Bool {
 
 switch 4 as Int? {
 case x?.method(): break // match value
+default: break
 }
 
 switch 4 {
@@ -181,9 +191,9 @@ case x ?? 42: break // match value
 default: break
 }
 
-for (var x) in 0...100 {}
-for var x in 0...100 {}  // rdar://20167543
-for (let x) in 0...100 {} // expected-error {{'let' pattern cannot appear nested in an already immutable context}}
+for (var x) in 0...100 {} // expected-warning{{variable 'x' was never used; consider replacing with '_' or removing it}}
+for var x in 0...100 {}  // rdar://20167543 expected-warning{{variable 'x' was never used; consider replacing with '_' or removing it}}
+for (let x) in 0...100 { _ = x} // expected-error {{'let' pattern cannot appear nested in an already immutable context}}
 
 var (let y) = 42  // expected-error {{'let' cannot appear nested inside another 'var' or 'let' pattern}}
 let (var z) = 42  // expected-error {{'var' cannot appear nested inside another 'var' or 'let' pattern}}
@@ -254,3 +264,53 @@ class SomeClass {}
 if case let doesNotExist as SomeClass:AlsoDoesNotExist {}
 // expected-error@-1 {{use of undeclared type 'AlsoDoesNotExist'}}
 // expected-error@-2 {{variable binding in a condition requires an initializer}}
+
+// `.foo` and `.bar(...)` pattern syntax should also be able to match
+// static members as expr patterns
+
+struct StaticMembers: Equatable {
+  init() {}
+  init(_: Int) {}
+  init?(opt: Int) {}
+  static var prop = StaticMembers()
+  static var optProp: Optional = StaticMembers()
+
+  static func method(_: Int) -> StaticMembers { return prop }
+  static func method(withLabel: Int) -> StaticMembers { return prop }
+  static func optMethod(_: Int) -> StaticMembers? { return optProp }
+
+  static func ==(x: StaticMembers, y: StaticMembers) -> Bool { return true }
+}
+
+let staticMembers = StaticMembers()
+let optStaticMembers: Optional = StaticMembers()
+
+switch staticMembers {
+  case .init: break // expected-error{{cannot match values of type 'StaticMembers'}}
+  case .init(opt:): break // expected-error{{cannot match values of type 'StaticMembers'}}
+  case .init(): break
+
+  case .init(0): break
+  case .init(_): break // expected-error{{'_' can only appear in a pattern}}
+  case .init(let x): break // expected-error{{cannot appear in an expression}}
+  case .init(opt: 0): break // expected-error{{not unwrapped}}
+
+  case .prop: break
+  // TODO: repeated error message
+  case .optProp: break // expected-error* {{not unwrapped}}
+
+  case .method: break // expected-error{{cannot match}}
+  case .method(0): break
+  case .method(_): break // expected-error{{'_' can only appear in a pattern}}
+  case .method(let x): break // expected-error{{cannot appear in an expression}}
+
+  case .method(withLabel:): break // expected-error{{cannot match}}
+  case .method(withLabel: 0): break
+  case .method(withLabel: _): break // expected-error{{'_' can only appear in a pattern}}
+  case .method(withLabel: let x): break // expected-error{{cannot appear in an expression}}
+
+  case .optMethod: break // expected-error{{cannot match}}
+  case .optMethod(0): break // expected-error{{not unwrapped}}
+}
+
+_ = 0

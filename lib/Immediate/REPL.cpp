@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -37,6 +37,7 @@
 
 #if HAVE_UNICODE_LIBEDIT
 #include <histedit.h>
+#include <wchar.h>
 #endif
 
 using namespace swift;
@@ -75,56 +76,58 @@ class ConvertForWcharSize;
 template<>
 class ConvertForWcharSize<2> {
 public:
-  static ConversionResult ConvertFromUTF8(const char** sourceStart,
-                                          const char* sourceEnd,
-                                          wchar_t** targetStart,
-                                          wchar_t* targetEnd,
-                                          ConversionFlags flags) {
-    return ConvertUTF8toUTF16(reinterpret_cast<const UTF8**>(sourceStart),
-                              reinterpret_cast<const UTF8*>(sourceEnd),
-                              reinterpret_cast<UTF16**>(targetStart),
-                              reinterpret_cast<UTF16*>(targetEnd),
+  static llvm::ConversionResult ConvertFromUTF8(const char** sourceStart,
+                                                const char* sourceEnd,
+                                                wchar_t** targetStart,
+                                                wchar_t* targetEnd,
+                                                llvm::ConversionFlags flags) {
+    return ConvertUTF8toUTF16(reinterpret_cast<const llvm::UTF8**>(sourceStart),
+                              reinterpret_cast<const llvm::UTF8*>(sourceEnd),
+                              reinterpret_cast<llvm::UTF16**>(targetStart),
+                              reinterpret_cast<llvm::UTF16*>(targetEnd),
                               flags);
   }
   
-  static ConversionResult ConvertToUTF8(const wchar_t** sourceStart,
-                                        const wchar_t* sourceEnd,
-                                        char** targetStart,
-                                        char* targetEnd,
-                                        ConversionFlags flags) {
-    return ConvertUTF16toUTF8(reinterpret_cast<const UTF16**>(sourceStart),
-                              reinterpret_cast<const UTF16*>(sourceEnd),
-                              reinterpret_cast<UTF8**>(targetStart),
-                              reinterpret_cast<UTF8*>(targetEnd),
-                              flags);
+  static llvm::ConversionResult ConvertToUTF8(const wchar_t** sourceStart,
+                                              const wchar_t* sourceEnd,
+                                              char** targetStart,
+                                              char* targetEnd,
+                                              llvm::ConversionFlags flags) {
+    return ConvertUTF16toUTF8(
+                             reinterpret_cast<const llvm::UTF16**>(sourceStart),
+                             reinterpret_cast<const llvm::UTF16*>(sourceEnd),
+                             reinterpret_cast<llvm::UTF8**>(targetStart),
+                             reinterpret_cast<llvm::UTF8*>(targetEnd),
+                             flags);
   }
 };
 
 template<>
 class ConvertForWcharSize<4> {
 public:
-  static ConversionResult ConvertFromUTF8(const char** sourceStart,
-                                          const char* sourceEnd,
-                                          wchar_t** targetStart,
-                                          wchar_t* targetEnd,
-                                          ConversionFlags flags) {
-    return ConvertUTF8toUTF32(reinterpret_cast<const UTF8**>(sourceStart),
-                              reinterpret_cast<const UTF8*>(sourceEnd),
-                              reinterpret_cast<UTF32**>(targetStart),
-                              reinterpret_cast<UTF32*>(targetEnd),
+  static llvm::ConversionResult ConvertFromUTF8(const char** sourceStart,
+                                                const char* sourceEnd,
+                                                wchar_t** targetStart,
+                                                wchar_t* targetEnd,
+                                                llvm::ConversionFlags flags) {
+    return ConvertUTF8toUTF32(reinterpret_cast<const llvm::UTF8**>(sourceStart),
+                              reinterpret_cast<const llvm::UTF8*>(sourceEnd),
+                              reinterpret_cast<llvm::UTF32**>(targetStart),
+                              reinterpret_cast<llvm::UTF32*>(targetEnd),
                               flags);
   }
   
-  static ConversionResult ConvertToUTF8(const wchar_t** sourceStart,
-                                        const wchar_t* sourceEnd,
-                                        char** targetStart,
-                                        char* targetEnd,
-                                        ConversionFlags flags) {
-    return ConvertUTF32toUTF8(reinterpret_cast<const UTF32**>(sourceStart),
-                              reinterpret_cast<const UTF32*>(sourceEnd),
-                              reinterpret_cast<UTF8**>(targetStart),
-                              reinterpret_cast<UTF8*>(targetEnd),
-                              flags);
+  static llvm::ConversionResult ConvertToUTF8(const wchar_t** sourceStart,
+                                              const wchar_t* sourceEnd,
+                                              char** targetStart,
+                                              char* targetEnd,
+                                              llvm::ConversionFlags flags) {
+    return ConvertUTF32toUTF8(
+                             reinterpret_cast<const llvm::UTF32**>(sourceStart),
+                             reinterpret_cast<const llvm::UTF32*>(sourceEnd),
+                             reinterpret_cast<llvm::UTF8**>(targetStart),
+                             reinterpret_cast<llvm::UTF8*>(targetEnd),
+                             flags);
   }
 };
 
@@ -139,8 +142,8 @@ static void convertFromUTF8(llvm::StringRef utf8,
   wchar_t *wide_begin = out.end();
   auto res = Convert::ConvertFromUTF8(&utf8_begin, utf8.end(),
                                       &wide_begin, out.data() + reserve,
-                                      lenientConversion);
-  assert(res == conversionOK && "utf8-to-wide conversion failed!");
+                                      llvm::lenientConversion);
+  assert(res == llvm::conversionOK && "utf8-to-wide conversion failed!");
   (void)res;
   out.set_size(wide_begin - out.begin());
 }
@@ -153,8 +156,8 @@ static void convertToUTF8(llvm::ArrayRef<wchar_t> wide,
   char *utf8_begin = out.end();
   auto res = Convert::ConvertToUTF8(&wide_begin, wide.end(),
                                     &utf8_begin, out.data() + reserve,
-                                    lenientConversion);
-  assert(res == conversionOK && "wide-to-utf8 conversion failed!");
+                                    llvm::lenientConversion);
+  assert(res == llvm::conversionOK && "wide-to-utf8 conversion failed!");
   (void)res;
   out.set_size(utf8_begin - out.begin());
 }
@@ -221,7 +224,7 @@ public:
   
   void print(llvm::raw_ostream &out) const override;
 };
-}
+} // end anonymous namespace
 
 /// EditLine wrapper that implements the user interface behavior for reading
 /// user input to the REPL. All of its methods must be usable from a separate
@@ -359,10 +362,11 @@ public:
         CurrentLines.append(indent, ' ');
       }
       
-      convertToUTF8(llvm::makeArrayRef(WLine, WLine + wcslen(WLine)),
+      size_t WLineLength = wcslen(WLine);
+      convertToUTF8(llvm::makeArrayRef(WLine, WLine + WLineLength),
                     CurrentLines);
 
-      wcslcat(TotalLine, WLine, sizeof(TotalLine) / sizeof(*TotalLine));
+      wcsncat(TotalLine, WLine, WLineLength);
 
       ++CurChunkLines;
 
@@ -737,7 +741,7 @@ public:
 
 private:
   ProcessCmdLine CmdLine;
-  llvm::SmallPtrSet<swift::Module *, 8> ImportedModules;
+  llvm::SmallPtrSet<swift::ModuleDecl *, 8> ImportedModules;
   SmallVector<llvm::Function*, 8> InitFns;
   bool RanGlobalInitializers;
   llvm::LLVMContext &LLVMContext;
@@ -831,6 +835,7 @@ private:
                                  RC.CurIRGenElem);
       performSILLinking(sil.get());
       runSILDiagnosticPasses(*sil);
+      runSILLoweringPasses(*sil);
     }
 
     if (CI.getASTContext().hadError()) {
@@ -992,7 +997,7 @@ public:
           "***  Type ':help' for assistance.              ***\n";
   }
   
-  swift::Module *getMainModule() const {
+  swift::ModuleDecl *getMainModule() const {
     return REPLInputFile.getParentModule();
   }
   StringRef getDumpSource() const { return DumpSource; }
@@ -1043,7 +1048,7 @@ public:
                    L.peekNextToken().getText() == "exit") {
           return false;
         } else if (L.peekNextToken().getText() == "dump_ir") {
-          DumpModule.dump();
+          DumpModule.print(llvm::dbgs(), nullptr, false, true);
         } else if (L.peekNextToken().getText() == "dump_ast") {
           REPLInputFile.dump();
         } else if (L.peekNextToken().getText() == "dump_decl" ||

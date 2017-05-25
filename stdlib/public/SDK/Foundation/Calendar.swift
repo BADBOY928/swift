@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -11,18 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 @_exported import Foundation // Clang module
-
-@_silgen_name("__NSCalendarIsAutoupdating")
-internal func __NSCalendarIsAutoupdating(_ calendar: NSCalendar) -> Bool
-
-@_silgen_name("__NSCalendarAutoupdating")
-internal func __NSCalendarAutoupdating() -> NSCalendar
-
-@_silgen_name("__NSCalendarCurrent")
-internal func __NSCalendarCurrent() -> NSCalendar
-
-@_silgen_name("__NSCalendarInit")
-internal func __NSCalendarInit(_ identifier : NSString) -> NSCalendar?
+import _SwiftFoundationOverlayShims
 
 /**
  `Calendar` encapsulates information about systems of reckoning time in which the beginning, length, and divisions of a year are defined. It provides information about the calendar and support for calendrical computations such as determining the range of a given calendrical unit and adding units to a given absolute time.
@@ -90,7 +79,7 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
     ///
     /// This calendar does not track changes that the user makes to their preferences.
     public static var current : Calendar {
-        return Calendar(adoptingReference: __NSCalendarCurrent(), autoupdating: false)
+        return Calendar(adoptingReference: __NSCalendarCurrent() as! NSCalendar, autoupdating: false)
     }
     
     /// A Calendar that tracks changes to user's preferred calendar.
@@ -99,7 +88,7 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
     ///
     /// - note: The autoupdating Calendar will only compare equal to another autoupdating Calendar.
     public static var autoupdatingCurrent : Calendar {
-        return Calendar(adoptingReference: __NSCalendarAutoupdating(), autoupdating: true)
+        return Calendar(adoptingReference: __NSCalendarAutoupdating() as! NSCalendar, autoupdating: true)
     }
 
     // MARK: -
@@ -109,8 +98,8 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
     ///
     /// - parameter identifier: The kind of calendar to use.
     public init(identifier: Identifier) {
-        let result = __NSCalendarInit(Calendar._toNSCalendarIdentifier(identifier).rawValue as NSString)!
-        _handle = _MutableHandle(adoptingReference: result)
+        let result = __NSCalendarCreate(Calendar._toNSCalendarIdentifier(identifier))
+        _handle = _MutableHandle(adoptingReference: result as! NSCalendar)
         _autoupdating = false
     }
     
@@ -1020,7 +1009,7 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
         }
     }
     
-    private static func _fromNSCalendarIdentifier(_ identifier : NSCalendar.Identifier) -> Identifier {
+    internal static func _fromNSCalendarIdentifier(_ identifier : NSCalendar.Identifier) -> Identifier {
         if #available(OSX 10.10, iOS 8.0, *) {
             let identifierMap : [NSCalendar.Identifier : Identifier] =
                 [.gregorian : .gregorian,
@@ -1095,13 +1084,14 @@ extension Calendar : CustomDebugStringConvertible, CustomStringConvertible, Cust
     }
     
     public var customMirror : Mirror {
-        var c: [(label: String?, value: Any)] = []
-        c.append((label: "identifier", value: identifier))
-        c.append((label: "kind", value: _kindDescription))
-        c.append((label: "locale", value: locale))
-        c.append((label: "timeZone", value: timeZone))
-        c.append((label: "firstWeekday", value: firstWeekday))
-        c.append((label: "minimumDaysInFirstWeek", value: minimumDaysInFirstWeek))
+        let c: [(label: String?, value: Any)] = [
+          ("identifier", identifier),
+          ("kind", _kindDescription),
+          ("locale", locale as Any),
+          ("timeZone", timeZone),
+          ("firstWeekday", firstWeekday),
+          ("minimumDaysInFirstWeek", minimumDaysInFirstWeek),
+        ]
         return Mirror(self, children: c, displayStyle: Mirror.DisplayStyle.struct)
     }
 }
@@ -1138,3 +1128,35 @@ extension NSCalendar : _HasCustomAnyHashableRepresentation {
     }
 }
 
+extension Calendar : Codable {
+    private enum CodingKeys : Int, CodingKey {
+        case identifier
+        case locale
+        case timeZone
+        case firstWeekday
+        case minimumDaysInFirstWeek
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let identifierString = try container.decode(String.self, forKey: .identifier)
+        let identifier = Calendar._fromNSCalendarIdentifier(NSCalendar.Identifier(rawValue: identifierString))
+        self.init(identifier: identifier)
+
+        self.locale = try container.decodeIfPresent(Locale.self, forKey: .locale)
+        self.timeZone = try container.decode(TimeZone.self, forKey: .timeZone)
+        self.firstWeekday = try container.decode(Int.self, forKey: .firstWeekday)
+        self.minimumDaysInFirstWeek = try container.decode(Int.self, forKey: .minimumDaysInFirstWeek)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+
+        let identifier = Calendar._toNSCalendarIdentifier(self.identifier).rawValue
+        try container.encode(identifier, forKey: .identifier)
+        try container.encode(self.locale, forKey: .locale)
+        try container.encode(self.timeZone, forKey: .timeZone)
+        try container.encode(self.firstWeekday, forKey: .firstWeekday)
+        try container.encode(self.minimumDaysInFirstWeek, forKey: .minimumDaysInFirstWeek)
+    }
+}

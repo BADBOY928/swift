@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -20,6 +20,7 @@
 #include "swift/AST/Stmt.h"
 #include "swift/AST/Expr.h"
 #include "swift/AST/Pattern.h"
+#include "swift/AST/ParameterList.h"
 #include "swift/AST/Types.h"
 #include "DerivedConformances.h"
 
@@ -82,11 +83,13 @@ static void deriveBodyRawRepresentable_raw(AbstractFunctionDecl *toRawDecl) {
   assert(rawTy);
   rawTy = toRawDecl->mapTypeIntoContext(rawTy);
 
+#ifndef NDEBUG
   for (auto elt : enumDecl->getAllElements()) {
     assert(elt->getTypeCheckedRawValueExpr() &&
            "Enum element has no literal - missing a call to checkEnumRawValues()");
     assert(elt->getTypeCheckedRawValueExpr()->getType()->isEqual(rawTy));
   }
+#endif
 
   Type enumType = parentDC->getDeclaredTypeInContext();
 
@@ -182,12 +185,14 @@ deriveBodyRawRepresentable_init(AbstractFunctionDecl *initDecl) {
   Type rawTy = enumDecl->getRawType();
   assert(rawTy);
   rawTy = initDecl->mapTypeIntoContext(rawTy);
-  
+
+#ifndef NDEBUG
   for (auto elt : enumDecl->getAllElements()) {
     assert(elt->getTypeCheckedRawValueExpr() &&
            "Enum element has no literal - missing a call to checkEnumRawValues()");
     assert(elt->getTypeCheckedRawValueExpr()->getType()->isEqual(rawTy));
   }
+#endif
 
   Type enumType = parentDC->getDeclaredTypeInContext();
 

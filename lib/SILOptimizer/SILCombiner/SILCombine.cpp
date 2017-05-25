@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -294,7 +294,7 @@ SILInstruction *SILCombiner::eraseInstFromFunction(SILInstruction &I,
   // use counts.
   if (I.getNumOperands() < 8 && AddOperandsToWorklist) {
     for (auto &OpI : I.getAllOperands()) {
-      if (SILInstruction *Op = llvm::dyn_cast<SILInstruction>(&*OpI.get())) {
+      if (auto *Op = llvm::dyn_cast<SILInstruction>(&*OpI.get())) {
         DEBUG(llvm::dbgs() << "SC: add op " << *Op <<
               " from erased inst to worklist\n");
         Worklist.add(Op);
@@ -349,7 +349,6 @@ class SILCombine : public SILFunctionTransform {
   
   bool needsNotifications() override { return true; }
 
-  StringRef getName() override { return "SIL Combine"; }
 };
 
 } // end anonymous namespace

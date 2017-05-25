@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -86,7 +86,7 @@ SILCombiner::visitAllocExistentialBoxInst(AllocExistentialBoxInst *AEBI) {
     // is going away so we need to release the stored value now.
     Builder.setInsertionPoint(SingleStore);
     Builder.createReleaseValue(AEBI->getLoc(), SingleStore->getSrc(),
-                               Atomicity::Atomic);
+                               SingleRelease->getAtomicity());
 
     // Erase the instruction that stores into the box and the release that
     // releases the box, and finally, release the box.
@@ -170,7 +170,43 @@ SILInstruction *SILCombiner::visitSelectValueInst(SelectValueInst *SVI) {
 }
 
 SILInstruction *SILCombiner::visitSwitchValueInst(SwitchValueInst *SVI) {
-  return nullptr;
+  SILValue Cond = SVI->getOperand();
+  BuiltinIntegerType *CondTy = Cond->getType().getAs<BuiltinIntegerType>();
+  if (!CondTy || !CondTy->isFixedWidth(1))
+    return nullptr;
+
+  SILBasicBlock *FalseBB = nullptr;
+  SILBasicBlock *TrueBB = nullptr;
+  for (unsigned Idx = 0, Num = SVI->getNumCases(); Idx < Num; ++Idx) {
+    auto Case = SVI->getCase(Idx);
+    auto *CaseVal = dyn_cast<IntegerLiteralInst>(Case.first);
+    if (!CaseVal)
+      return nullptr;
+    SILBasicBlock *DestBB = Case.second;
+    assert(DestBB->args_empty() &&
+           "switch_value case destination cannot take arguments");
+    if (CaseVal->getValue() == 0) {
+      assert(!FalseBB && "double case value 0 in switch_value");
+      FalseBB = DestBB;
+    } else {
+      assert(!TrueBB && "double case value 1 in switch_value");
+      TrueBB = DestBB;
+    }
+  }
+  if (SVI->hasDefault()) {
+    assert(SVI->getDefaultBB()->args_empty() &&
+           "switch_value default destination cannot take arguments");
+    if (!FalseBB) {
+      FalseBB = SVI->getDefaultBB();
+    } else if (!TrueBB) {
+      TrueBB = SVI->getDefaultBB();
+    }
+  }
+  if (!FalseBB || !TrueBB)
+    return nullptr;
+
+  Builder.setCurrentDebugScope(SVI->getDebugScope());
+  return Builder.createCondBranch(SVI->getLoc(), Cond, TrueBB, FalseBB);
 }
 
 namespace {
@@ -315,9 +351,7 @@ SILInstruction *SILCombiner::visitAllocStackInst(AllocStackInst *AS) {
   // Be careful with open archetypes, because they cannot be moved before
   // their definitions.
   if (IEI && !OEI &&
-      !IEI->getLoweredConcreteType()
-           .getSwiftRValueType()
-           ->isOpenedExistential()) {
+      !IEI->getLoweredConcreteType().isOpenedExistential()) {
     auto *ConcAlloc = Builder.createAllocStack(
         AS->getLoc(), IEI->getLoweredConcreteType(), AS->getVarInfo());
     IEI->replaceAllUsesWith(ConcAlloc);
@@ -389,6 +423,33 @@ SILInstruction *SILCombiner::visitAllocStackInst(AllocStackInst *AS) {
     eraseInstFromFunction(*Inst);
   }
   return eraseInstFromFunction(*AS);
+}
+
+SILInstruction *SILCombiner::visitAllocRefInst(AllocRefInst *AR) {
+  if (!AR)
+    return nullptr;
+  // Check if the only uses are deallocating stack or deallocating.
+  SmallPtrSet<SILInstruction *, 16> ToDelete;
+  bool HasNonRemovableUses = false;
+  for (auto UI = AR->use_begin(), UE = AR->use_end(); UI != UE;) {
+    auto *Op = *UI;
+    ++UI;
+    auto *User = Op->getUser();
+    if (!isa<DeallocRefInst>(User) && !isa<SetDeallocatingInst>(User)) {
+      HasNonRemovableUses = true;
+      break;
+    }
+    ToDelete.insert(User);
+  }
+
+  if (HasNonRemovableUses)
+    return nullptr;
+
+  // Remove the instruction and all its uses.
+  for (auto *I : ToDelete)
+    eraseInstFromFunction(*I);
+  eraseInstFromFunction(*AR);
+  return nullptr;
 }
 
 SILInstruction *SILCombiner::visitLoadInst(LoadInst *LI) {
@@ -467,19 +528,19 @@ SILInstruction *SILCombiner::visitReleaseValueInst(ReleaseValueInst *RVI) {
     // reduced to a retain_value on the payload.
     if (EI->hasOperand()) {
       return Builder.createReleaseValue(RVI->getLoc(), EI->getOperand(),
-                                        Atomicity::Atomic);
+                                        RVI->getAtomicity());
     }
   }
 
   // ReleaseValueInst of an unowned type is an unowned_release.
   if (OperandTy.is<UnownedStorageType>())
     return Builder.createUnownedRelease(RVI->getLoc(), Operand,
-                                        Atomicity::Atomic);
+                                        RVI->getAtomicity());
 
   // ReleaseValueInst of a reference type is a strong_release.
   if (OperandTy.isReferenceCounted(RVI->getModule()))
     return Builder.createStrongRelease(RVI->getLoc(), Operand,
-                                       Atomicity::Atomic);
+                                       RVI->getAtomicity());
 
   // ReleaseValueInst of a trivial type is a no-op.
   if (OperandTy.isTrivial(RVI->getModule()))
@@ -505,19 +566,19 @@ SILInstruction *SILCombiner::visitRetainValueInst(RetainValueInst *RVI) {
     // reduced to a retain_value on the payload.
     if (EI->hasOperand()) {
       return Builder.createRetainValue(RVI->getLoc(), EI->getOperand(),
-                                       Atomicity::Atomic);
+                                       RVI->getAtomicity());
     }
   }
 
   // RetainValueInst of an unowned type is an unowned_retain.
   if (OperandTy.is<UnownedStorageType>())
     return Builder.createUnownedRetain(RVI->getLoc(), Operand,
-                                       Atomicity::Atomic);
+                                       RVI->getAtomicity());
 
   // RetainValueInst of a reference type is a strong_release.
   if (OperandTy.isReferenceCounted(RVI->getModule())) {
     return Builder.createStrongRetain(RVI->getLoc(), Operand,
-                                      Atomicity::Atomic);
+                                      RVI->getAtomicity());
   }
 
   // RetainValueInst of a trivial type is a no-op + use propagation.
@@ -545,7 +606,7 @@ SILInstruction *SILCombiner::visitRetainValueInst(RetainValueInst *RVI) {
 
     // ...and the predecessor instruction is a release_value on the same value
     // as our retain_value...
-    if (ReleaseValueInst *Release = dyn_cast<ReleaseValueInst>(&*Pred))
+    if (auto *Release = dyn_cast<ReleaseValueInst>(&*Pred))
       // Remove them...
       if (Release->getOperand() == RVI->getOperand()) {
         eraseInstFromFunction(*Release);
@@ -553,6 +614,16 @@ SILInstruction *SILCombiner::visitRetainValueInst(RetainValueInst *RVI) {
       }
   }
 
+  return nullptr;
+}
+
+SILInstruction *
+SILCombiner::visitReleaseValueAddrInst(ReleaseValueAddrInst *RVI) {
+  return nullptr;
+}
+
+SILInstruction *
+SILCombiner::visitRetainValueAddrInst(RetainValueAddrInst *RVI) {
   return nullptr;
 }
 
@@ -623,7 +694,7 @@ SILInstruction *SILCombiner::visitStrongRetainInst(StrongRetainInst *SRI) {
 
     // ...and the predecessor instruction is a strong_release on the same value
     // as our strong_retain...
-    if (StrongReleaseInst *Release = dyn_cast<StrongReleaseInst>(&*Pred))
+    if (auto *Release = dyn_cast<StrongReleaseInst>(&*Pred))
       // Remove them...
       if (Release->getOperand() == SRI->getOperand()) {
         eraseInstFromFunction(*Release);
@@ -777,7 +848,7 @@ SILCombiner::visitInjectEnumAddrInst(InjectEnumAddrInst *IEAI) {
 
   // If the enum does not have a payload create the enum/store since we don't
   // need to worry about payloads.
-  if (!IEAI->getElement()->hasArgumentType()) {
+  if (!IEAI->getElement()->hasAssociatedValues()) {
     EnumInst *E =
       Builder.createEnum(IEAI->getLoc(), SILValue(), IEAI->getElement(),
                           IEAI->getOperand()->getType().getObjectType());
@@ -837,8 +908,8 @@ SILCombiner::visitInjectEnumAddrInst(InjectEnumAddrInst *IEAI) {
   if (!hasOneNonDebugUse(DataAddrInst))
     return nullptr;
 
-  StoreInst *SI = dyn_cast<StoreInst>(getSingleNonDebugUser(DataAddrInst));
-  ApplyInst *AI = dyn_cast<ApplyInst>(getSingleNonDebugUser(DataAddrInst));
+  auto *SI = dyn_cast<StoreInst>(getSingleNonDebugUser(DataAddrInst));
+  auto *AI = dyn_cast<ApplyInst>(getSingleNonDebugUser(DataAddrInst));
   if (!SI && !AI) {
     return nullptr;
   }
@@ -926,8 +997,8 @@ SILCombiner::visitInjectEnumAddrInst(InjectEnumAddrInst *IEAI) {
     // Found an apply that initializes the enum. We can optimize this by
     // localizing the initialization to an alloc_stack and loading from it.
     DataAddrInst = dyn_cast<InitEnumDataAddrInst>(Opd.get());
-    if (DataAddrInst && DataAddrInst->getOperand() == IEAI->getOperand() &&
-        ArgIdx < AI->getSubstCalleeType()->getNumIndirectResults()) {
+    if (DataAddrInst && DataAddrInst->getOperand() == IEAI->getOperand()
+        && ArgIdx < AI->getSubstCalleeConv().getNumIndirectSILResults()) {
       EnumInitOperand = &Opd;
       break;
     }
@@ -1050,9 +1121,22 @@ SILInstruction *SILCombiner::visitStrongReleaseInst(StrongReleaseInst *SRI) {
 
 SILInstruction *SILCombiner::visitCondBranchInst(CondBranchInst *CBI) {
   // cond_br(xor(x, 1)), t_label, f_label -> cond_br x, f_label, t_label
+  // cond_br(x == 0), t_label, f_label -> cond_br x, f_label, t_label
+  // cond_br(x != 1), t_label, f_label -> cond_br x, f_label, t_label
   SILValue X;
-  if (match(CBI->getCondition(), m_ApplyInst(BuiltinValueKind::Xor,
-                                             m_SILValue(X), m_One()))) {
+  if (match(CBI->getCondition(),
+            m_CombineOr(
+                // xor(x, 1)
+                m_ApplyInst(BuiltinValueKind::Xor, m_SILValue(X), m_One()),
+                // xor(1,x)
+                m_ApplyInst(BuiltinValueKind::Xor, m_One(), m_SILValue(X)),
+                // x == 0
+                m_ApplyInst(BuiltinValueKind::ICMP_EQ, m_SILValue(X), m_Zero()),
+                // x != 1
+                m_ApplyInst(BuiltinValueKind::ICMP_NE, m_SILValue(X),
+                            m_One()))) &&
+      X->getType() ==
+          SILType::getBuiltinIntegerType(1, CBI->getModule().getASTContext())) {
     SmallVector<SILValue, 4> OrigTrueArgs, OrigFalseArgs;
     for (const auto &Op : CBI->getTrueArgs())
       OrigTrueArgs.push_back(Op);
@@ -1262,7 +1346,7 @@ visitAllocRefDynamicInst(AllocRefDynamicInst *ARDI) {
     MDVal = UC->getOperand();
 
   SILInstruction *NewInst = nullptr;
-  if (MetatypeInst *MI = dyn_cast<MetatypeInst>(MDVal)) {
+  if (auto *MI = dyn_cast<MetatypeInst>(MDVal)) {
     auto &Mod = ARDI->getModule();
     auto SILInstanceTy = MI->getType().getMetatypeInstanceType(Mod);
 
@@ -1304,30 +1388,3 @@ SILInstruction *SILCombiner::visitEnumInst(EnumInst *EI) {
   return nullptr;
 }
 
-SILInstruction *SILCombiner::visitWitnessMethodInst(WitnessMethodInst *WMI) {
-  // Try to devirtualize a witness_method if it is statically possible.
-  // Many cases are handled by the inliner/devirtualizer, but certain
-  // special cases are not covered there, e.g. partial_apply(witness_method)
-  SILFunction *F;
-  SILWitnessTable *WT;
-
-  std::tie(F, WT) =
-      WMI->getModule().lookUpFunctionInWitnessTable(WMI->getConformance(),
-                                                    WMI->getMember());
-
-  if (!F)
-    return nullptr;
-
-  for (auto U = WMI->use_begin(), E = WMI->use_end(); U != E;) {
-    auto User = U->getUser();
-    ++U;
-    if (auto AI = ApplySite::isa(User)) {
-      auto Result = tryDevirtualizeWitnessMethod(AI);
-      if (Result.first) {
-        User->replaceAllUsesWith(Result.first);
-        eraseInstFromFunction(*User);
-      }
-    }
-  }
-  return nullptr;
-}

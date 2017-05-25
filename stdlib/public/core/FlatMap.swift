@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -20,8 +20,8 @@ extension LazySequenceProtocol {
   /// `s.map(transform).joined()`.
   ///
   /// - Complexity: O(1)
-  public func flatMap<SegmentOfResult : Sequence>(
-    _ transform: @escaping (Elements.Iterator.Element) -> SegmentOfResult
+  public func flatMap<SegmentOfResult>(
+    _ transform: @escaping (Elements.Element) -> SegmentOfResult
   ) -> LazySequence<
     FlattenSequence<LazyMapSequence<Elements, SegmentOfResult>>> {
     return self.map(transform).joined()
@@ -38,7 +38,7 @@ extension LazySequenceProtocol {
   ///
   /// - Complexity: O(1)
   public func flatMap<ElementOfResult>(
-    _ transform: @escaping (Elements.Iterator.Element) -> ElementOfResult?
+    _ transform: @escaping (Elements.Element) -> ElementOfResult?
   ) -> LazyMapSequence<
     LazyFilterSequence<
       LazyMapSequence<Elements, ElementOfResult?>>,
@@ -58,8 +58,8 @@ extension LazyCollectionProtocol {
   /// `c.map(transform).joined()`.
   ///
   /// - Complexity: O(1)
-  public func flatMap<SegmentOfResult : Collection>(
-    _ transform: @escaping (Elements.Iterator.Element) -> SegmentOfResult
+  public func flatMap<SegmentOfResult>(
+    _ transform: @escaping (Elements.Element) -> SegmentOfResult
   ) -> LazyCollection<
     FlattenCollection<
       LazyMapCollection<Elements, SegmentOfResult>>
@@ -78,7 +78,7 @@ extension LazyCollectionProtocol {
   ///
   /// - Complexity: O(1)
   public func flatMap<ElementOfResult>(
-    _ transform: @escaping (Elements.Iterator.Element) -> ElementOfResult?
+    _ transform: @escaping (Elements.Element) -> ElementOfResult?
   ) -> LazyMapCollection<
     LazyFilterCollection<
       LazyMapCollection<Elements, ElementOfResult?>>,
@@ -102,12 +102,11 @@ extension LazyCollectionProtocol
   /// `c.map(transform).joined()`.
   ///
   /// - Complexity: O(1)
-  public func flatMap<SegmentOfResult : Collection>(
-    _ transform: @escaping (Elements.Iterator.Element) -> SegmentOfResult
+  public func flatMap<SegmentOfResult>(
+    _ transform: @escaping (Elements.Element) -> SegmentOfResult
   ) -> LazyCollection<
     FlattenBidirectionalCollection<
-      LazyMapBidirectionalCollection<Elements, SegmentOfResult>>>
-    where SegmentOfResult : BidirectionalCollection {
+      LazyMapBidirectionalCollection<Elements, SegmentOfResult>>> {
     return self.map(transform).joined()
   }
   
@@ -122,7 +121,7 @@ extension LazyCollectionProtocol
   ///
   /// - Complexity: O(1)
   public func flatMap<ElementOfResult>(
-    _ transform: @escaping (Elements.Iterator.Element) -> ElementOfResult?
+    _ transform: @escaping (Elements.Element) -> ElementOfResult?
   ) -> LazyMapBidirectionalCollection<
     LazyFilterBidirectionalCollection<
       LazyMapBidirectionalCollection<Elements, ElementOfResult?>>,

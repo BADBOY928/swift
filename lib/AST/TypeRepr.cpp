@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -77,7 +77,7 @@ Identifier ComponentIdentTypeRepr::getIdentifier() const {
   if (IdOrDecl.is<Identifier>())
     return IdOrDecl.get<Identifier>();
 
-  return IdOrDecl.get<ValueDecl *>()->getName();
+  return IdOrDecl.get<TypeDecl *>()->getName();
 }
 
 static void printTypeRepr(const TypeRepr *TyR, ASTPrinter &Printer,
@@ -329,20 +329,14 @@ static void printGenericArgs(ASTPrinter &Printer, const PrintOptions &Opts,
     return;
 
   Printer << "<";
-  bool First = true;
-  for (auto Arg : Args) {
-    if (First)
-      First = false;
-    else
-      Printer << ", ";
-    printTypeRepr(Arg, Printer, Opts);
-  }
+  interleave(Args, [&](TypeRepr *Arg) { printTypeRepr(Arg, Printer, Opts); },
+             [&] { Printer << ", "; });
   Printer << ">";
 }
 
 void ComponentIdentTypeRepr::printImpl(ASTPrinter &Printer,
                                        const PrintOptions &Opts) const {
-  if (TypeDecl *TD = dyn_cast_or_null<TypeDecl>(getBoundDecl())) {
+  if (auto *TD = dyn_cast_or_null<TypeDecl>(getBoundDecl())) {
     if (auto MD = dyn_cast<ModuleDecl>(TD))
       Printer.printModuleRef(MD, getIdentifier());
     else
@@ -552,14 +546,8 @@ void CompositionTypeRepr::printImpl(ASTPrinter &Printer,
   if (Types.empty()) {
     Printer << "Any";
   } else {
-    bool First = true;
-    for (auto T : Types) {
-      if (First)
-        First = false;
-      else
-        Printer << " & ";
-      printTypeRepr(T, Printer, Opts);
-    }
+    interleave(Types, [&](TypeRepr *T) { printTypeRepr(T, Printer, Opts); },
+               [&] { Printer << " & "; });
   }
 }
 

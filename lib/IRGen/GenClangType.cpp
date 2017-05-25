@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -19,6 +19,7 @@
 #include "swift/AST/ASTContext.h"
 #include "swift/AST/CanTypeVisitor.h"
 #include "swift/AST/Decl.h"
+#include "swift/AST/ExistentialLayout.h"
 #include "swift/AST/NameLookup.h"
 #include "swift/SIL/SILType.h"
 #include "swift/ClangImporter/ClangImporter.h"
@@ -49,7 +50,7 @@ public:
                                                CanStructType type);
 };
 
-static CanType getNamedSwiftType(Module *stdlib, StringRef name) {
+static CanType getNamedSwiftType(ModuleDecl *stdlib, StringRef name) {
   auto &ctx = stdlib->getASTContext();
   SmallVector<ValueDecl*, 1> results;
   stdlib->lookupValue({}, ctx.getIdentifier(name), NLKind::QualifiedLookup,
@@ -349,10 +350,6 @@ clang::CanQualType GenClangType::visitTupleType(CanTupleType type) {
 clang::CanQualType GenClangType::visitProtocolType(CanProtocolType type) {
   auto proto = type->getDecl();
 
-  // AnyObject -> id.
-  if (proto->isSpecificProtocol(KnownProtocolKind::AnyObject))
-    return getClangIdType(getClangASTContext());
-
   // Single protocol -> id<Proto>
   if (proto->isObjC()) {
     auto &clangCtx = getClangASTContext();
@@ -537,7 +534,7 @@ clang::CanQualType GenClangType::visitSILFunctionType(CanSILFunctionType type) {
   }
   
   // Convert the return and parameter types.
-  auto allResults = type->getAllResults();
+  auto allResults = type->getResults();
   assert(allResults.size() <= 1 && "multiple results with C convention");
   clang::QualType resultType;
   if (allResults.empty()) {
@@ -554,13 +551,13 @@ clang::CanQualType GenClangType::visitSILFunctionType(CanSILFunctionType type) {
     switch (paramTy.getConvention()) {
     case ParameterConvention::Direct_Guaranteed:
     case ParameterConvention::Direct_Unowned:
-    case ParameterConvention::Direct_Deallocating:
       // OK.
       break;
 
     case ParameterConvention::Direct_Owned:
       llvm_unreachable("block takes owned parameter");
     case ParameterConvention::Indirect_In:
+    case ParameterConvention::Indirect_In_Constant:
     case ParameterConvention::Indirect_Inout:
     case ParameterConvention::Indirect_InoutAliasable:
     case ParameterConvention::Indirect_In_Guaranteed:
@@ -599,23 +596,43 @@ clang::CanQualType GenClangType::visitSILBlockStorageType(CanSILBlockStorageType
 
 clang::CanQualType GenClangType::visitProtocolCompositionType(
   CanProtocolCompositionType type) {
+  auto &clangCtx = getClangASTContext();
+
   // FIXME. Eventually, this will have its own helper routine.
   SmallVector<const clang::ObjCProtocolDecl *, 4> Protocols;
-  for (CanType t : type.getProtocols()) {
-    auto opt = cast<clang::ObjCObjectPointerType>(Converter.convert(IGM, t));
+  auto layout = type.getExistentialLayout();
+  assert(layout.isObjC() && "Cannot represent opaque existential in Clang");
+
+  // AnyObject -> id.
+  if (layout.isAnyObject())
+    return getClangIdType(getClangASTContext());
+
+  auto superclassTy = clangCtx.ObjCBuiltinIdTy;
+  if (layout.superclass) {
+    superclassTy = clangCtx.getCanonicalType(
+      cast<clang::ObjCObjectPointerType>(
+        Converter.convert(IGM, CanType(layout.superclass)))
+        ->getPointeeType());
+  }
+
+  for (Type t : layout.getProtocols()) {
+    auto opt = cast<clang::ObjCObjectPointerType>(
+      Converter.convert(IGM, CanType(t)));
     for (auto p : opt->quals())
       Protocols.push_back(p);
   }
 
-  auto &clangCtx = getClangASTContext();
   if (Protocols.empty())
-    return getClangIdType(clangCtx);
+    return superclassTy;
+
   // id<protocol-list>
-  clang::ObjCProtocolDecl **ProtoQuals = new(clangCtx) clang::ObjCProtocolDecl*[Protocols.size()];
-  memcpy(ProtoQuals, Protocols.data(), sizeof(clang::ObjCProtocolDecl*)*Protocols.size());
-  auto clangType = clangCtx.getObjCObjectType(clangCtx.ObjCBuiltinIdTy,
-                     ProtoQuals,
-                     Protocols.size());
+  clang::ObjCProtocolDecl **ProtoQuals =
+    new(clangCtx) clang::ObjCProtocolDecl*[Protocols.size()];
+  memcpy(ProtoQuals, Protocols.data(),
+         sizeof(clang::ObjCProtocolDecl*)*Protocols.size());
+  auto clangType = clangCtx.getObjCObjectType(superclassTy,
+                                              ProtoQuals,
+                                              Protocols.size());
   auto ptrTy = clangCtx.getObjCObjectPointerType(clangType);
   return clangCtx.getCanonicalType(ptrTy);
 }
@@ -727,14 +744,14 @@ clang::CanQualType IRGenModule::getClangType(SILType type) {
 }
 
 clang::CanQualType IRGenModule::getClangType(SILParameterInfo params) {
-  auto clangType = getClangType(params.getSILType());
+  auto clangType = getClangType(params.getSILStorageType());
   // @block_storage types must be @inout_aliasable and have
   // special lowering
-  if (!params.getSILType().is<SILBlockStorageType>()) {
+  if (!params.getSILStorageType().is<SILBlockStorageType>()) {
     if (params.isIndirectMutating()) {
       return getClangASTContext().getPointerType(clangType);
     }
-    if (params.isIndirect()) {
+    if (params.isFormalIndirect()) {
       auto constTy =
         getClangASTContext().getCanonicalType(clangType.withConst());
       return getClangASTContext().getPointerType(constTy);

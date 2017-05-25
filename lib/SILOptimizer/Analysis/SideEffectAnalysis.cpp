@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -208,8 +208,9 @@ bool SideEffectAnalysis::getSemanticEffects(FunctionEffects &FE,
       if (!ASC.mayHaveBridgedObjectElementType()) {
         SelfEffects.Reads = true;
         SelfEffects.Releases |= !ASC.hasGuaranteedSelf();
-        for (auto i : indices(((ApplyInst *)ASC)->getOrigCalleeType()
-                                                ->getIndirectResults())) {
+        for (auto i : range(((ApplyInst *)ASC)
+                                ->getOrigCalleeConv()
+                                .getNumIndirectSILResults())) {
           assert(!ASC.hasGetElementDirectResult());
           FE.ParamEffects[i].Writes = true;
         }
@@ -364,7 +365,7 @@ void SideEffectAnalysis::analyzeInstruction(FunctionInfo *FInfo,
       auto Params = PAI->getSubstCalleeType()->getParameters();
       Params = Params.slice(Params.size() - Args.size(), Args.size());
       for (unsigned Idx : indices(Args)) {
-        if (isIndirectParameter(Params[Idx].getConvention()))
+        if (isIndirectFormalParameter(Params[Idx].getConvention()))
           FInfo->FE.getEffectsOn(Args[Idx])->Reads = true;
       }
       return;
@@ -514,7 +515,7 @@ void SideEffectAnalysis::getEffects(FunctionEffects &ApplyEffects, FullApplySite
   }
 }
 
-void SideEffectAnalysis::invalidate(InvalidationKind K) {
+void SideEffectAnalysis::invalidate() {
   Function2Info.clear();
   Allocator.DestroyAll();
   DEBUG(llvm::dbgs() << "invalidate all\n");

@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -33,7 +33,7 @@ namespace swift {
   class DeclContext;
   class GenericEnvironment;
   class IdentTypeRepr;
-  class ValueDecl;
+  class TypeDecl;
 
 enum class TypeReprKind : uint8_t {
 #define TYPEREPR(ID, PARENT) ID,
@@ -243,7 +243,7 @@ class ComponentIdentTypeRepr : public IdentTypeRepr {
   ///
   /// The initial parsed representation is always an identifier, and
   /// name binding will resolve this to a specific declaration.
-  llvm::PointerUnion<Identifier, ValueDecl *> IdOrDecl;
+  llvm::PointerUnion<Identifier, TypeDecl *> IdOrDecl;
 
 protected:
   ComponentIdentTypeRepr(TypeReprKind K, SourceLoc Loc, Identifier Id)
@@ -258,11 +258,11 @@ public:
   void overwriteIdentifier(Identifier newId) { IdOrDecl = newId; }
 
   /// Return true if this has been name-bound already.
-  bool isBound() const { return IdOrDecl.is<ValueDecl *>(); }
+  bool isBound() const { return IdOrDecl.is<TypeDecl *>(); }
 
-  ValueDecl *getBoundDecl() const { return IdOrDecl.dyn_cast<ValueDecl*>(); }
+  TypeDecl *getBoundDecl() const { return IdOrDecl.dyn_cast<TypeDecl*>(); }
 
-  void setValue(ValueDecl *VD) { IdOrDecl = VD; }
+  void setValue(TypeDecl *TD) { IdOrDecl = TD; }
 
   static bool classof(const TypeRepr *T) {
     return T->getKind() == TypeReprKind::SimpleIdent ||
@@ -282,6 +282,13 @@ class SimpleIdentTypeRepr : public ComponentIdentTypeRepr {
 public:
   SimpleIdentTypeRepr(SourceLoc Loc, Identifier Id)
     : ComponentIdentTypeRepr(TypeReprKind::SimpleIdent, Loc, Id) {}
+
+  // SmallVector::emplace_back will never need to call this because
+  // we reserve the right size, but it does try statically.
+  SimpleIdentTypeRepr(const SimpleIdentTypeRepr &repr)
+      : SimpleIdentTypeRepr(repr.getLoc(), repr.getIdentifier()) {
+    llvm_unreachable("should not be called dynamically");
+  }
 
   static bool classof(const TypeRepr *T) {
     return T->getKind() == TypeReprKind::SimpleIdent;
@@ -526,8 +533,12 @@ public:
 
 private:
   SourceLoc getStartLocImpl() const { return Base->getStartLoc(); }
-  SourceLoc getEndLocImpl() const { return QuestionLoc; }
-  SourceLoc getLocImpl() const { return QuestionLoc; }
+  SourceLoc getEndLocImpl() const {
+    return QuestionLoc.isValid() ? QuestionLoc : Base->getEndLoc();
+  }
+  SourceLoc getLocImpl() const {
+    return QuestionLoc.isValid() ? QuestionLoc : Base->getLoc();
+  }
   void printImpl(ASTPrinter &Printer, const PrintOptions &Opts) const;
   friend class TypeRepr;
 };
@@ -841,6 +852,12 @@ class FixedTypeRepr : public TypeRepr {
 public:
   FixedTypeRepr(Type Ty, SourceLoc Loc)
     : TypeRepr(TypeReprKind::Fixed), Ty(Ty), Loc(Loc) {}
+
+  // SmallVector::emplace_back will never need to call this because
+  // we reserve the right size, but it does try statically.
+  FixedTypeRepr(const FixedTypeRepr &repr) : FixedTypeRepr(repr.Ty, repr.Loc) {
+    llvm_unreachable("should not be called dynamically");
+  }
 
   /// Retrieve the location.
   SourceLoc getLoc() const { return Loc; }

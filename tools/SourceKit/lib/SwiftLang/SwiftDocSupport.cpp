@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -10,6 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/AST/Decl.h"
+#include "clang/Basic/Module.h"
 #include "SwiftASTManager.h"
 #include "SwiftEditorDiagConsumer.h"
 #include "SwiftLangSupport.h"
@@ -34,7 +36,7 @@ using namespace SourceKit;
 using namespace swift;
 using namespace ide;
 
-static Module *getModuleByFullName(ASTContext &Ctx, StringRef ModuleName) {
+static ModuleDecl *getModuleByFullName(ASTContext &Ctx, StringRef ModuleName) {
   SmallVector<std::pair<Identifier, SourceLoc>, 4>
       AccessPath;
   while (!ModuleName.empty()) {
@@ -45,7 +47,7 @@ static Module *getModuleByFullName(ASTContext &Ctx, StringRef ModuleName) {
   return Ctx.getModule(AccessPath);
 }
 
-static Module *getModuleByFullName(ASTContext &Ctx, Identifier ModuleName) {
+static ModuleDecl *getModuleByFullName(ASTContext &Ctx, Identifier ModuleName) {
   return Ctx.getModule(std::make_pair(ModuleName, SourceLoc()));
 }
 
@@ -97,19 +99,21 @@ struct TextReference {
 };
 
 class AnnotatingPrinter : public StreamPrinter {
-  const NominalTypeDecl *SynthesizeTarget = nullptr;
+
+  std::pair<const ExtensionDecl *, const NominalTypeDecl *>
+    SynthesizedExtensionInfo = {nullptr, nullptr};
 
   typedef llvm::SmallDenseMap<ValueDecl*, ValueDecl*> DefaultImplementMap;
   llvm::SmallDenseMap<ProtocolDecl*, DefaultImplementMap> AllDefaultMaps;
   DefaultImplementMap *DefaultMapToUse = nullptr;
 
   void initDefaultMapToUse(const Decl *D) {
-    const ExtensionDecl *ED = dyn_cast<ExtensionDecl>(D);
+    const auto *ED = dyn_cast<ExtensionDecl>(D);
     if (!ED)
       return;
     if (ED->getExtendedType()) {
       if (auto NTD = ED->getExtendedType()->getAnyNominal()) {
-        if (ProtocolDecl *PD = dyn_cast<ProtocolDecl>(NTD)) {
+        if (auto *PD = dyn_cast<ProtocolDecl>(NTD)) {
           auto Pair = AllDefaultMaps.insert({PD, DefaultImplementMap()});
           DefaultMapToUse = &Pair.first->getSecond();
           if (Pair.second) {
@@ -122,7 +126,7 @@ class AnnotatingPrinter : public StreamPrinter {
   }
 
   void deinitDefaultMapToUse(const Decl*D) {
-    if (D->getKind() == DeclKind::Extension) {
+    if (isa<ExtensionDecl>(D)) {
       DefaultMapToUse = nullptr;
     }
   }
@@ -130,7 +134,7 @@ class AnnotatingPrinter : public StreamPrinter {
   ValueDecl *getDefaultImplementation(const Decl *D) {
     if (!DefaultMapToUse)
       return nullptr;
-    ValueDecl *VD = const_cast<ValueDecl*>(dyn_cast<ValueDecl>(D));
+    auto *VD = const_cast<ValueDecl*>(dyn_cast<ValueDecl>(D));
     auto Found = DefaultMapToUse->find(VD);
     if (Found != DefaultMapToUse->end()) {
       return Found->second;
@@ -145,24 +149,24 @@ public:
 
   using StreamPrinter::StreamPrinter;
 
-  ~AnnotatingPrinter() {
+  ~AnnotatingPrinter() override {
     assert(EntitiesStack.empty());
   }
 
   bool shouldContinuePre(const Decl *D, Optional<BracketOptions> Bracket) {
     assert(Bracket.hasValue());
     if (!Bracket.getValue().shouldOpenExtension(D) &&
-        D->getKind() == DeclKind::Extension)
+        isa<ExtensionDecl>(D))
       return false;
     return true;
   }
 
   bool shouldContinuePost(const Decl *D, Optional<BracketOptions> Bracket) {
     assert(Bracket.hasValue());
-    if (!Bracket.getValue().shouldCloseNominal(D) && dyn_cast<NominalTypeDecl>(D))
+    if (!Bracket.getValue().shouldCloseNominal(D) && isa<NominalTypeDecl>(D))
       return false;
     if (!Bracket.getValue().shouldCloseExtension(D) &&
-        D->getKind() == DeclKind::Extension)
+        isa<ExtensionDecl>(D))
       return false;
     return true;
   }
@@ -170,19 +174,20 @@ public:
   void printSynthesizedExtensionPre(const ExtensionDecl *ED,
                                     const NominalTypeDecl *NTD,
                                     Optional<BracketOptions> Bracket) override {
-    assert(!SynthesizeTarget);
-    SynthesizeTarget = NTD;
+    assert(!SynthesizedExtensionInfo.first);
+    SynthesizedExtensionInfo = {ED, NTD};
     if (!shouldContinuePre(ED, Bracket))
       return;
     unsigned StartOffset = OS.tell();
-    EntitiesStack.emplace_back(ED, SynthesizeTarget, nullptr, StartOffset, true);
+    EntitiesStack.emplace_back(ED, SynthesizedExtensionInfo.second, nullptr,
+                               StartOffset, true);
   }
 
   void printSynthesizedExtensionPost(const ExtensionDecl *ED,
                                      const NominalTypeDecl *NTD,
                                      Optional<BracketOptions> Bracket) override {
-    assert(SynthesizeTarget);
-    SynthesizeTarget = nullptr;
+    assert(SynthesizedExtensionInfo.first);
+    SynthesizedExtensionInfo = {nullptr, nullptr};
     if (!shouldContinuePost(ED, Bracket))
       return;
     TextEntity Entity = std::move(EntitiesStack.back());
@@ -199,8 +204,12 @@ public:
       return;
     unsigned StartOffset = OS.tell();
     initDefaultMapToUse(D);
-    EntitiesStack.emplace_back(D, SynthesizeTarget, getDefaultImplementation(D),
-                               StartOffset, false);
+    const NominalTypeDecl *SynthesizedTarget = nullptr;
+    // If D is declared in the extension, then the synthesized target is valid.
+    if (D->getDeclContext() == SynthesizedExtensionInfo.first)
+      SynthesizedTarget = SynthesizedExtensionInfo.second;
+    EntitiesStack.emplace_back(D, SynthesizedTarget,
+                               getDefaultImplementation(D), StartOffset, false);
   }
 
   void printDeclLoc(const Decl *D) override {
@@ -243,7 +252,7 @@ struct SourceTextInfo {
   std::vector<TextReference> References;
 };
 
-}
+} // end anonymous namespace
 
 static void initDocGenericParams(const Decl *D, DocEntityInfo &Info) {
   auto *DC = dyn_cast<DeclContext>(D);
@@ -290,6 +299,8 @@ static bool initDocEntityInfo(const Decl *D, const Decl *SynthesizedTarget,
                               bool IsRef, bool IsSynthesizedExtension,
                               DocEntityInfo &Info,
                               StringRef Arg = StringRef()) {
+  if (!IsRef && D->isImplicit())
+    return true;
   if (!D || isa<ParamDecl>(D) ||
       (isa<VarDecl>(D) && D->getDeclContext()->isLocalContext())) {
     Info.Kind = SwiftLangSupport::getUIDForLocalVar(IsRef);
@@ -313,7 +324,7 @@ static bool initDocEntityInfo(const Decl *D, const Decl *SynthesizedTarget,
 
   if (Info.Kind.isInvalid())
     return true;
-  if (const ValueDecl *VD = dyn_cast<ValueDecl>(D)) {
+  if (const auto *VD = dyn_cast<ValueDecl>(D)) {
     llvm::raw_svector_ostream NameOS(Info.Name);
     SwiftLangSupport::printDisplayName(VD, NameOS);
     {
@@ -371,6 +382,9 @@ static bool initDocEntityInfo(const Decl *D, const Decl *SynthesizedTarget,
 
     initDocGenericParams(D, Info);
 
+    llvm::raw_svector_ostream LocalizationKeyOS(Info.LocalizationKey);
+    ide::getLocalizationKey(D, LocalizationKeyOS);
+
     if (auto *VD = dyn_cast<ValueDecl>(D)) {
       llvm::raw_svector_ostream OS(Info.FullyAnnotatedDecl);
       if (SynthesizedTarget)
@@ -378,6 +392,44 @@ static bool initDocEntityInfo(const Decl *D, const Decl *SynthesizedTarget,
           (NominalTypeDecl*)SynthesizedTarget, OS);
       else
         SwiftLangSupport::printFullyAnnotatedDeclaration(VD, Type(), OS);
+    }
+  }
+
+  switch(D->getDeclContext()->getContextKind()) {
+    case DeclContextKind::AbstractClosureExpr:
+    case DeclContextKind::TopLevelCodeDecl:
+    case DeclContextKind::AbstractFunctionDecl:
+    case DeclContextKind::SubscriptDecl:
+    case DeclContextKind::Initializer:
+    case DeclContextKind::SerializedLocal:
+    case DeclContextKind::ExtensionDecl:
+    case DeclContextKind::GenericTypeDecl:
+      break;
+
+    // We report sub-module information only for top-level decls.
+    case DeclContextKind::Module:
+    case DeclContextKind::FileUnit: {
+      if (auto *CD = D->getClangDecl()) {
+        if (auto *M = CD->getImportedOwningModule()) {
+          const clang::Module *Root = M->getTopLevelModule();
+
+          // If Root differs from the owning module, then the owning module is
+          // a sub-module.
+          if (M != Root) {
+            llvm::raw_svector_ostream OS(Info.SubModuleName);
+            llvm::SmallVector<StringRef, 4> Names;
+
+            // Climb up and collect sub-module names.
+            for (auto Current = M; Current != Root; Current = Current->Parent) {
+              Names.insert(Names.begin(), Current->Name);
+            }
+            OS << Root->Name;
+            std::for_each(Names.begin(), Names.end(),
+                          [&](StringRef N) { OS << "." << N; });
+          }
+        }
+      }
+      break;
     }
   }
 
@@ -427,7 +479,7 @@ static void passInherits(ArrayRef<TypeLoc> InheritedTypes,
 
     if (auto ProtoComposition
                = Inherited.getType()->getAs<ProtocolCompositionType>()) {
-      for (auto T : ProtoComposition->getProtocols())
+      for (auto T : ProtoComposition->getMembers())
         passInherits(TypeLoc::withoutLoc(T), Consumer);
       continue;
     }
@@ -465,7 +517,7 @@ static void reportRelated(ASTContext &Ctx,
                           DocInfoConsumer &Consumer) {
   if (!D || isa<ParamDecl>(D))
     return;
-  if (const ExtensionDecl *ED = dyn_cast<ExtensionDecl>(D)) {
+  if (const auto *ED = dyn_cast<ExtensionDecl>(D)) {
     if (SynthesizedTarget) {
       passExtends((ValueDecl*)SynthesizedTarget, Consumer);
     } else if (Type T = ED->getExtendedType()) {
@@ -491,7 +543,7 @@ static void reportRelated(ASTContext &Ctx,
 
     // Otherwise, report the inheritance of the type alias itself.
     passInheritsAndConformancesForValueDecl(TAD, Consumer);
-  } else if (const TypeDecl *TD = dyn_cast<TypeDecl>(D)) {
+  } else if (const auto *TD = dyn_cast<TypeDecl>(D)) {
     passInherits(TD->getInherited(), Consumer);
     passConforms(TD->getSatisfiedProtocolRequirements(/*Sorted=*/true),
                  Consumer);
@@ -710,10 +762,11 @@ private:
     }
   }
 };
-}
+} // end anonymous namespace
 
-static bool makeParserAST(CompilerInstance &CI, StringRef Text) {
-  CompilerInvocation Invocation;
+static bool makeParserAST(CompilerInstance &CI, StringRef Text,
+                          CompilerInvocation Invocation) {
+  Invocation.clearInputs();
   Invocation.setModuleName("main");
   Invocation.setInputKind(InputFileKind::IFK_Swift);
 
@@ -844,7 +897,7 @@ public:
     return false; // skip body.
   }
 };
-}
+} // end anonymous namespace
 
 static void addParameterEntities(CompilerInstance &CI,
                                  SourceTextInfo &IFaceInfo) {
@@ -924,7 +977,7 @@ static bool reportModuleDocInfo(CompilerInvocation Invocation,
     return true;
 
   CompilerInstance ParseCI;
-  if (makeParserAST(ParseCI, IFaceInfo.Text))
+  if (makeParserAST(ParseCI, IFaceInfo.Text, Invocation))
     return true;
   addParameterEntities(ParseCI, IFaceInfo);
 
@@ -948,7 +1001,7 @@ public:
   SourceDocASTWalker(SourceManager &SM, unsigned BufferID)
     : SM(SM), BufferID(BufferID) {}
 
-  ~SourceDocASTWalker() {
+  ~SourceDocASTWalker() override {
     assert(EntitiesStack.empty());
   }
 
@@ -977,8 +1030,8 @@ public:
   }
 
   bool visitDeclReference(ValueDecl *D, CharSourceRange Range,
-                          TypeDecl *CtorTyRef, Type Ty,
-                          SemaReferenceKind Kind) override {
+                          TypeDecl *CtorTyRef, ExtensionDecl *ExtTyRef, Type Ty,
+                          ReferenceMetaData Data) override {
     unsigned StartOffset = getOffset(Range.getStart());
     References.emplace_back(D, StartOffset, Range.getByteLength(), Ty);
     return true;
@@ -987,8 +1040,8 @@ public:
   bool visitSubscriptReference(ValueDecl *D, CharSourceRange Range,
                                bool IsOpenBracket) override {
     // Treat both open and close brackets equally
-    return visitDeclReference(D, Range, nullptr, Type(),
-                              SemaReferenceKind::SubscriptRef);
+    return visitDeclReference(D, Range, nullptr, nullptr, Type(),
+                      ReferenceMetaData(SemaReferenceKind::SubscriptRef, None));
   }
 
   bool isLocal(Decl *D) const {
@@ -1005,7 +1058,7 @@ public:
     return TextRange{ Start, End-Start };
   }
 };
-}
+} // end anonymous namespace
 
 static bool getSourceTextInfo(CompilerInstance &CI,
                               SourceTextInfo &Info) {

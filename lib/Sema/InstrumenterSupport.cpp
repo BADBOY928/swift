@@ -1,8 +1,8 @@
-//===--- InstrumenterSupport.h - Instrumenter Support ---------------------===//
+//===--- InstrumenterSupport.cpp - Instrumenter Support -------------------===//
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -33,12 +33,16 @@ public:
   }
   ~ErrorGatherer() override { diags.takeConsumers(); }
   void handleDiagnostic(SourceManager &SM, SourceLoc Loc,
-                        DiagnosticKind Kind, StringRef Text,
+                        DiagnosticKind Kind,
+                        StringRef FormatString,
+                        ArrayRef<DiagnosticArgument> FormatArgs,
                         const DiagnosticInfo &Info) override {
     if (Kind == swift::DiagnosticKind::Error) {
       error = true;
     }
-    llvm::errs() << Text << "\n";
+    DiagnosticEngine::formatDiagnosticText(llvm::errs(), FormatString,
+                                           FormatArgs);
+    llvm::errs() << "\n";
   }
   bool hadError() { return error; }
 };
@@ -57,7 +61,7 @@ public:
     return {true, E};
   }
   bool walkToDeclPre(Decl *D) override {
-    if (ValueDecl *VD = dyn_cast<ValueDecl>(D)) {
+    if (auto *VD = dyn_cast<ValueDecl>(D)) {
       if (!VD->hasInterfaceType() || VD->getInterfaceType()->hasError()) {
         error = true;
         return false;
@@ -67,7 +71,7 @@ public:
   }
   bool hadError() { return error; }
 };
-}
+} // end anonymous namespace
 
 void InstrumenterBase::anchor() {}
 

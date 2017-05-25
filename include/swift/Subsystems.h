@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -20,6 +20,7 @@
 #include "swift/Basic/LLVM.h"
 #include "swift/Basic/OptionSet.h"
 #include "swift/Basic/Version.h"
+#include "swift/Syntax/TokenSyntax.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/Optional.h"
@@ -37,7 +38,7 @@ namespace llvm {
 }
 
 namespace swift {
-  class ArchetypeBuilder;
+  class GenericSignatureBuilder;
   class ASTContext;
   class CodeCompletionCallbacksFactory;
   class Decl;
@@ -62,7 +63,7 @@ namespace swift {
   class Token;
   class TopLevelContext;
   struct TypeLoc;
-  
+
   /// SILParserState - This is a context object used to optionally maintain SIL
   /// parsing context for the parser.
   class SILParserState {
@@ -130,14 +131,15 @@ namespace swift {
                               bool TokenizeInterpolatedString = true,
                               ArrayRef<Token> SplitTokens = ArrayRef<Token>());
 
-  /// Once parsing is complete, this walks the AST to resolve condition clauses
-  /// and other top-level validation.
-  void performConditionResolution(SourceFile &SF);
-
-  /// \brief Finish condition resolution for the bodies of function nodes that
-  /// were delayed during the first parsing pass.
-  void performDelayedConditionResolution(Decl *D, SourceFile &BSF,
-                                         SmallVectorImpl<Decl *> &ExtraTLCDs);
+  /// \brief Lex and return a vector of `RC<TokenSyntax>` tokens, which include
+  /// leading and trailing trivia.
+  std::vector<std::pair<RC<syntax::TokenSyntax>,
+                                   syntax::AbsolutePosition>>
+  tokenizeWithTrivia(const LangOptions &LangOpts,
+                     const SourceManager &SM,
+                     unsigned BufferID,
+                     unsigned Offset = 0,
+                     unsigned EndOffset = 0);
 
   /// Once parsing is complete, this walks the AST to resolve imports, record
   /// operators, and do other top-level validation.
@@ -170,7 +172,11 @@ namespace swift {
 
     /// Indicates that the type checker is checking code that will be
     /// immediately executed.
-    ForImmediateMode = 1 << 2
+    ForImmediateMode = 1 << 2,
+
+    /// If set, dumps wall time taken to type check each expression to
+    /// llvm::errs().
+    DebugTimeExpressions = 1 << 3,
   };
 
   /// Once parsing and name-binding are complete, this walks the AST to resolve
@@ -340,7 +346,6 @@ namespace swift {
     struct Implementation;
     Implementation &Impl;
   };
-
 } // end namespace swift
 
 #endif // SWIFT_SUBSYSTEMS_H

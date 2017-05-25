@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -671,14 +671,8 @@ bool importer::isUnavailableInSwift(
   if (enableObjCInterop && isObjCId(decl))
     return true;
 
-  // FIXME: Somewhat duplicated from importAttributes(), but this is a
-  // more direct path.
-  if (decl->getAvailability() == clang::AR_Unavailable)
+  if (decl->isUnavailable())
     return true;
-
-  // Apply the deprecated-as-unavailable filter.
-  if (!platformAvailability.deprecatedAsUnavailableFilter)
-    return false;
 
   for (auto *attr : decl->specific_attrs<clang::AvailabilityAttr>()) {
     if (attr->getPlatform()->getName() == "swift")
@@ -689,12 +683,15 @@ bool importer::isUnavailableInSwift(
       continue;
     }
 
-    clang::VersionTuple version = attr->getDeprecated();
-    if (version.empty())
-      continue;
-    if (platformAvailability.deprecatedAsUnavailableFilter(version.getMajor(),
-                                                           version.getMinor()))
-      return true;
+    if (platformAvailability.deprecatedAsUnavailableFilter) {
+      clang::VersionTuple version = attr->getDeprecated();
+      if (version.empty())
+        continue;
+      if (platformAvailability.deprecatedAsUnavailableFilter(
+            version.getMajor(), version.getMinor())) {
+        return true;
+      }
+    }
   }
 
   return false;

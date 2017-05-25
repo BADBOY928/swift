@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -57,7 +57,7 @@ ToolChain::JobContext::getTemporaryFilePath(const llvm::Twine &name,
     llvm::report_fatal_error("unable to create temporary file for filelist");
   }
 
-  C.addTemporaryFile(buffer.str());
+  C.addTemporaryFile(buffer.str(), PreserveOnSignal::Yes);
   // We can't just reference the data in the TemporaryFiles vector because
   // that could theoretically get copied to a new address.
   return C.getArgs().MakeArgString(buffer.str());
@@ -83,6 +83,8 @@ ToolChain::constructJob(const JobAction &JA,
     CASE(ModuleWrapJob)
     CASE(LinkJob)
     CASE(GenerateDSYMJob)
+    CASE(VerifyDebugInfoJob)
+    CASE(GeneratePCHJob)
     CASE(AutolinkExtractJob)
     CASE(REPLJob)
 #undef CASE

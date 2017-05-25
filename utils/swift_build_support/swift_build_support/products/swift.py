@@ -2,7 +2,7 @@
 #
 # This source file is part of the Swift.org open source project
 #
-# Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+# Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 # Licensed under Apache License v2.0 with Runtime Library Exception
 #
 # See https://swift.org/LICENSE.txt for license information
@@ -35,6 +35,10 @@ class Swift(product.Product):
 
         # Generate the compile db.
         self.cmake_options.extend(self._compile_db_flags)
+
+        # Add the flag if we are supposed to force the typechecker to compile
+        # with optimization.
+        self.cmake_options.extend(self._force_optimized_typechecker_flags)
 
     @property
     def _runtime_sanitizer_flags(self):
@@ -108,3 +112,9 @@ updated without updating swift.py?")
     @property
     def _compile_db_flags(self):
         return ['-DCMAKE_EXPORT_COMPILE_COMMANDS=TRUE']
+
+    @property
+    def _force_optimized_typechecker_flags(self):
+        if not self.args.force_optimized_typechecker:
+            return ['-DSWIFT_FORCE_OPTIMIZED_TYPECHECKER=FALSE']
+        return ['-DSWIFT_FORCE_OPTIMIZED_TYPECHECKER=TRUE']

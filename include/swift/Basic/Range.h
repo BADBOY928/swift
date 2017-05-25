@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -141,6 +141,10 @@ public:
   }
   T front() const { assert(!empty()); return Begin; }
   T back() const { assert(!empty()); return End - 1; }
+  IntRange drop_back(size_t length = 1) const {
+    assert(length <= size());
+    return IntRange(Begin, End - length);
+  }
 
   IntRange slice(size_t start) const {
     assert(start <= size());

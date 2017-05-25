@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -11,15 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 @_exported import Foundation // Clang module
-
-@_silgen_name("__NSTimeZoneIsAutoupdating")
-internal func __NSTimeZoneIsAutoupdating(_ timezone: NSTimeZone) -> Bool
-
-@_silgen_name("__NSTimeZoneAutoupdating")
-internal func __NSTimeZoneAutoupdating() -> NSTimeZone
-
-@_silgen_name("__NSTimeZoneCurrent")
-internal func __NSTimeZoneCurrent() -> NSTimeZone
+import _SwiftFoundationOverlayShims
 
 /**
  `TimeZone` defines the behavior of a time zone. Time zone values represent geopolitical regions. Consequently, these values have names for these regions. Time zone values also represent a temporal offset, either plus or minus, from Greenwich Mean Time (GMT) and an abbreviation (such as PST for Pacific Standard Time).
@@ -38,7 +30,7 @@ public struct TimeZone : Hashable, Equatable, ReferenceConvertible {
     
     /// The time zone currently used by the system.
     public static var current : TimeZone {
-        return TimeZone(adoptingReference: __NSTimeZoneCurrent(), autoupdating: false)
+        return TimeZone(adoptingReference: __NSTimeZoneCurrent() as! NSTimeZone, autoupdating: false)
     }
     
     /// The time zone currently used by the system, automatically updating to the user's current preference.
@@ -47,7 +39,7 @@ public struct TimeZone : Hashable, Equatable, ReferenceConvertible {
     ///
     /// The autoupdating time zone only compares equal to itself.
     public static var autoupdatingCurrent : TimeZone {
-        return TimeZone(adoptingReference: __NSTimeZoneAutoupdating(), autoupdating: true)
+        return TimeZone(adoptingReference: __NSTimeZoneAutoupdating() as! NSTimeZone, autoupdating: true)
     }
     
     // MARK: -
@@ -87,7 +79,7 @@ public struct TimeZone : Hashable, Equatable, ReferenceConvertible {
     
     /// Returns a time zone identified by a given abbreviation.
     ///
-    /// In general, you are discouraged from using abbreviations except for unique instances such as "GMT". Time Zone abbreviations are not standardized and so a given abbreviation may have multiple meanings—for example, "EST" refers to Eastern Time in both the United States and Australia
+    /// In general, you are discouraged from using abbreviations except for unique instances such as "GMT". Time Zone abbreviations are not standardized and so a given abbreviation may have multiple meanings--for example, "EST" refers to Eastern Time in both the United States and Australia
     ///
     /// - parameter abbreviation: The abbreviation for the time zone.
     /// - returns: A time zone identified by abbreviation determined by resolving the abbreviation to an identifier using the abbreviation dictionary and then returning the time zone for that identifier. Returns `nil` if there is no match for abbreviation.
@@ -233,12 +225,13 @@ extension TimeZone : CustomStringConvertible, CustomDebugStringConvertible, Cust
     }
     
     public var customMirror : Mirror {
-        var c: [(label: String?, value: Any)] = []
-        c.append((label: "identifier", value: identifier))
-        c.append((label: "kind", value: _kindDescription))
-        c.append((label: "abbreviation", value: abbreviation()))
-        c.append((label: "secondsFromGMT", value: secondsFromGMT()))
-        c.append((label: "isDaylightSavingTime", value: isDaylightSavingTime()))
+        let c: [(label: String?, value: Any)] = [
+          ("identifier", identifier),
+          ("kind", _kindDescription),
+          ("abbreviation", abbreviation() as Any),
+          ("secondsFromGMT", secondsFromGMT()),
+          ("isDaylightSavingTime", isDaylightSavingTime()),
+        ]
         return Mirror(self, children: c, displayStyle: Mirror.DisplayStyle.struct)
     }
     
@@ -284,3 +277,25 @@ extension NSTimeZone : _HasCustomAnyHashableRepresentation {
     }
 }
 
+extension TimeZone : Codable {
+    private enum CodingKeys : Int, CodingKey {
+        case identifier
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let identifier = try container.decode(String.self, forKey: .identifier)
+
+        guard let timeZone = TimeZone(identifier: identifier) else {
+            throw DecodingError.dataCorrupted(DecodingError.Context(codingPath: decoder.codingPath,
+                                                                    debugDescription: "Invalid TimeZone identifier."))
+        }
+
+        self = timeZone
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.identifier, forKey: .identifier)
+    }
+}

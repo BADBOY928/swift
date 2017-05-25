@@ -137,7 +137,7 @@ struct AnyStream<T : Sequence> {
   }
 }
 
-func enumerate<T : Sequence>(_ arg: T) -> AnyStream<T> {
+func enumerate<T>(_ arg: T) -> AnyStream<T> {
   return AnyStream<T>(input: arg)
 }
 
@@ -224,7 +224,7 @@ extension GS {
   }
 
   func h() {
-    _ = GS() as GS<Int> // expected-error{{cannot convert value of type 'GS<T>' to type 'GS<Int>' in coercion}}
+    _ = GS() as GS<Int> // expected-error{{'GS<T>' is not convertible to 'GS<Int>'; did you mean to use 'as!' to force downcast?}}
   }
 }
 
@@ -335,5 +335,72 @@ class DerivedClass : BaseClass {
 
   override func m3() -> T {
     return f2()
+  }
+}
+
+// https://bugs.swift.org/browse/SR-3847: Resolve members in inner types.
+// This first extension isn't necessary; we could have put 'originalValue' in
+// the original declaration.
+extension OuterNonGenericClass.InnerNonGenericBase {
+  static let originalValue = 0
+}
+// Each of these two cases used to crash.
+extension OuterNonGenericClass.InnerNonGenericBase {
+  static let propUsingMember = originalValue
+}
+extension OuterNonGenericClass.InnerNonGenericClass1 {
+  static let anotherPropUsingMember = originalValue
+}
+
+// rdar://problem/30353095: Extensions of nested types with generic
+// requirements placed on type parameters
+struct OuterWithConstraint<T : HasAssocType> {
+  struct InnerWithConstraint<U : HasAssocType> { }
+}
+
+extension OuterWithConstraint.InnerWithConstraint {
+  func foo<V>(v: V) where T.FirstAssocType == U.SecondAssocType {}
+}
+
+// Name lookup within a 'where' clause should find generic parameters
+// of the outer type.
+extension OuterGeneric.MidGeneric where D == Int, F == String {
+  func doStuff() -> (D, F) {
+    return (100, "hello")
+  }
+}
+
+// https://bugs.swift.org/browse/SR-4672
+protocol ExpressibleByCatLiteral {}
+protocol ExpressibleByDogLiteral {}
+
+struct Kitten : ExpressibleByCatLiteral {}
+struct Puppy : ExpressibleByDogLiteral {}
+
+struct Claws<A: ExpressibleByCatLiteral> {
+  struct Fangs<B: ExpressibleByDogLiteral> { }
+}
+
+func pets<T>(fur: T) -> Claws<Kitten>.Fangs<T> {
+  return Claws<Kitten>.Fangs<T>()
+}
+
+func test() {
+  let _: Claws<Kitten>.Fangs<Puppy> = pets(fur: Puppy())
+}
+
+// https://bugs.swift.org/browse/SR-4379
+extension OuterGeneric.MidNonGeneric {
+  func doStuff() -> OuterGeneric {
+    return OuterGeneric()
+  }
+
+  func doMoreStuff() -> OuterGeneric.MidNonGeneric {
+    return OuterGeneric.MidNonGeneric()
+  }
+
+  func doMoreStuffWrong() -> Self {
+    // expected-error@-1 {{'Self' is only available in a protocol or as the result of a method in a class; did you mean 'OuterGeneric.MidNonGeneric'?}}
+
   }
 }

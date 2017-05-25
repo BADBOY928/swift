@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -19,7 +19,7 @@
 
 #include "swift/Basic/RelativePointer.h"
 
-const uint16_t SWIFT_REFLECTION_METADATA_VERSION = 1;
+const uint16_t SWIFT_REFLECTION_METADATA_VERSION = 3; // superclass field
 
 namespace swift {
 namespace reflection {
@@ -145,6 +145,7 @@ class FieldDescriptor {
   }
 
   const RelativeDirectPointer<const char> MangledTypeName;
+  const RelativeDirectPointer<const char> Superclass;
 
 public:
   FieldDescriptor() = delete;
@@ -189,6 +190,14 @@ public:
 
   std::string getMangledTypeName() const {
     return MangledTypeName.get();
+  }
+
+  bool hasSuperclass() const {
+    return Superclass;
+  }
+
+  std::string getSuperclass() const {
+    return Superclass.get();
   }
 };
 

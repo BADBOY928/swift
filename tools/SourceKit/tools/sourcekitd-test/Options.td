@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -93,3 +93,25 @@ def async : Flag<["-"], "async">,
 
 def end_pos : Separate<["-"], "end-pos">, HelpText<"line:col">;
 def end_pos_EQ : Joined<["-"], "end-pos=">, Alias<end_pos>;
+
+def swift_version : Separate<["-"], "swift-version">, HelpText<"the swift version to use">;
+def swift_version_EQ : Joined<["-"], "swift-version=">, Alias<swift_version>;
+
+def swift_name : Separate<["-"], "swift-name">,
+  HelpText<"Swift name to translate from">;
+
+def objc_name : Separate<["-"], "objc-name">,
+  HelpText<"Objective-C name to translate from">;
+
+def objc_selector : Separate<["-"], "objc-selector">,
+  HelpText<"Objective-C selector name to translate from">;
+
+def cancel_on_subsequent_request : Separate<["-"], "cancel-on-subsequent-request">,
+  HelpText<"Whether to cancel if there is a subsequent request using the same AST">;
+def cancel_on_subsequent_request_EQ : Joined<["-"], "cancel-on-subsequent-request=">,
+  Alias<cancel_on_subsequent_request>;
+
+def help : Flag<["-", "--"], "help">,
+  HelpText<"Display available options">;
+
+def h : Flag<["-"], "h">, Alias<help>;

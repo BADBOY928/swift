@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -41,7 +41,7 @@ import SwiftPrivateLibcExtras
 import SwiftPrivatePthreadExtras
 #if os(OSX) || os(iOS)
 import Darwin
-#elseif os(Linux) || os(FreeBSD) || os(PS4) || os(Android)
+#elseif os(Linux) || os(FreeBSD) || os(PS4) || os(Android) || CYGWIN
 import Glibc
 #endif
 
@@ -413,9 +413,7 @@ class _RaceTestSharedState<RT : RaceTestWithPerTrialData> {
   }
 }
 
-func _masterThreadStopWorkers<RT : RaceTestWithPerTrialData>(
-    _ sharedState: _RaceTestSharedState<RT>
-) {
+func _masterThreadStopWorkers<RT>( _ sharedState: _RaceTestSharedState<RT>) {
   // Workers are proceeding to the first barrier in _workerThreadOneTrial.
   sharedState.stopNow.store(1)
   // Allow workers to proceed past that first barrier. They will then see
@@ -423,9 +421,7 @@ func _masterThreadStopWorkers<RT : RaceTestWithPerTrialData>(
   sharedState.trialBarrier.wait()
 }
 
-func _masterThreadOneTrial<RT : RaceTestWithPerTrialData>(
-  _ sharedState: _RaceTestSharedState<RT>
-) {
+func _masterThreadOneTrial<RT>(_ sharedState: _RaceTestSharedState<RT>) {
   let racingThreadCount = sharedState.racingThreadCount
   let raceDataCount = racingThreadCount * racingThreadCount
   let rt = RT()
@@ -485,7 +481,7 @@ func _masterThreadOneTrial<RT : RaceTestWithPerTrialData>(
   }
 }
 
-func _workerThreadOneTrial<RT : RaceTestWithPerTrialData>(
+func _workerThreadOneTrial<RT>(
   _ tid: Int, _ sharedState: _RaceTestSharedState<RT>
 ) -> Bool {
   sharedState.trialBarrier.wait()

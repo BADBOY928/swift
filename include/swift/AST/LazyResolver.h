@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -51,11 +51,6 @@ public:
   /// the given protocol conformance.
   virtual void resolveWitness(const NormalProtocolConformance *conformance,
                               ValueDecl *requirement) = 0;
-
-  /// Resolve an inherited conformance.
-  virtual ProtocolConformance *resolveInheritedConformance(
-                                 const NormalProtocolConformance *conformance,
-                                 ProtocolDecl *inherited) = 0;
 
   /// Resolve the accessibility of a value.
   ///
@@ -127,12 +122,6 @@ public:
     Principal.resolveWitness(conformance, requirement);
   }
 
-  ProtocolConformance *resolveInheritedConformance(
-                         const NormalProtocolConformance *conformance,
-                         ProtocolDecl *inherited) override {
-    return Principal.resolveInheritedConformance(conformance, inherited);
-  }
-
   void resolveAccessibility(ValueDecl *VD) override {
     Principal.resolveAccessibility(VD);
   }
@@ -184,6 +173,8 @@ public:
   }
 };
 
+class LazyMemberLoader;
+
 /// Context data for lazy deserialization.
 class LazyContextData {
 public:
@@ -191,22 +182,15 @@ public:
   LazyMemberLoader *loader;
 };
 
-/// Context data for abstract function declarations.
-class LazyAbstractFunctionData : public LazyContextData {
-public:
-  /// The context data used for loading the generic environment.
-  uint64_t genericEnvData = 0;
-};
-
-/// Context data for generic type declarations.
-class LazyGenericTypeData : public LazyContextData {
+/// Context data for generic contexts.
+class LazyGenericContextData : public LazyContextData {
 public:
   /// The context data used for loading the generic environment.
   uint64_t genericEnvData = 0;
 };
 
 /// Context data for iterable decl contexts.
-class LazyIterableDeclContextData : public LazyGenericTypeData {
+class LazyIterableDeclContextData : public LazyGenericContextData {
 public:
   /// The context data used for loading all of the members of the iterable
   /// context.
@@ -254,7 +238,7 @@ public:
   }
 
   /// Returns the generic environment.
-  virtual GenericEnvironment *loadGenericEnvironment(const Decl *decl,
+  virtual GenericEnvironment *loadGenericEnvironment(const DeclContext *decl,
                                                      uint64_t contextData) {
     llvm_unreachable("unimplemented");
   }

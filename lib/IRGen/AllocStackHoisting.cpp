@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -59,9 +59,7 @@ static bool isHoistable(AllocStackInst *Inst, irgen::IRGenModule &Mod) {
 
   // Don't hoist generics with opened archetypes. We would have to hoist the
   // open archetype instruction which might not be possible.
-  if (!Inst->getTypeDependentOperands().empty())
-    return false;
-  return true;
+  return Inst->getTypeDependentOperands().empty();
 }
 
 /// A partition of alloc_stack instructions.
@@ -85,7 +83,7 @@ public:
   /// non-overlapping.
   void assignStackLocation(SmallVectorImpl<SILInstruction *> &FunctionExits);
 };
-} // end anonymous namespace.
+} // end anonymous namespace
 
 /// Erases all dealloc_stack users of an alloc_stack
 static void eraseDeallocStacks(AllocStackInst *AllocStack) {
@@ -110,6 +108,13 @@ insertDeallocStackAtEndOf(SmallVectorImpl<SILInstruction *> &FunctionExits,
   }
 }
 
+/// Hack to workaround a clang LTO bug.
+LLVM_ATTRIBUTE_NOINLINE
+void moveAllocStackToBeginningOfBlock(AllocStackInst* AS, SILBasicBlock *BB) {
+  AS->removeFromParent();
+  BB->push_front(AS);
+}
+
 /// Assign a single alloc_stack instruction to all the alloc_stacks in the
 /// partition.
 void Partition::assignStackLocation(
@@ -120,8 +125,7 @@ void Partition::assignStackLocation(
 
   // Move this assigned location to the beginning of the entry block.
   auto *EntryBB = AssignedLoc->getFunction()->getEntryBlock();
-  AssignedLoc->removeFromParent();
-  EntryBB->push_front(AssignedLoc);
+  moveAllocStackToBeginningOfBlock(AssignedLoc, EntryBB);
 
   // Erase the dealloc_stacks.
   eraseDeallocStacks(AssignedLoc);
@@ -213,7 +217,7 @@ public:
     return false;
   }
 };
-} // end anonymous namespace.
+} // end anonymous namespace
 
 namespace {
 /// Merge alloc_stack instructions.
@@ -237,7 +241,7 @@ public:
   /// block.
   void mergeSlots();
 };
-} // end anonymous namespace.
+} // end anonymous namespace
 
 MergeStackSlots::MergeStackSlots(SmallVectorImpl<AllocStackInst *> &AllocStacks,
                                  SmallVectorImpl<SILInstruction *> &FuncExits)
@@ -339,7 +343,7 @@ private:
   /// Move the hoistable alloc_stack instructions to the entry block.
   void hoist();
 };
-}
+} // end anonymous namespace
 
 /// Collect generic alloc_stack instructions in the current function can be
 /// hoisted.
@@ -420,10 +424,9 @@ class AllocStackHoisting : public SILFunctionTransform {
       PM->invalidateAnalysis(F, SILAnalysis::InvalidationKind::Instructions);
     }
   }
-  StringRef getName() override { return "alloc_stack Hoisting"; }
 };
 } // end anonymous namespace
 
-SILFunctionTransform *irgen::createAllocStackHoisting() {
+SILTransform *irgen::createAllocStackHoisting() {
   return new AllocStackHoisting();
 }

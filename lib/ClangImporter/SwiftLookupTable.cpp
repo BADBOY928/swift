@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -322,7 +322,8 @@ clang::NamedDecl *SwiftLookupTable::resolveContext(StringRef unresolvedName) {
 }
 
 void SwiftLookupTable::addCategory(clang::ObjCCategoryDecl *category) {
-  assert(!Reader && "Cannot modify a lookup table stored on disk");
+  // Force deserialization to occur before appending.
+  (void) categories();
 
   // Add the category.
   Categories.push_back(category);
@@ -417,9 +418,13 @@ static bool isGlobalAsMember(SwiftLookupTable::SingleEntry entry,
   // We have a declaration.
   auto decl = entry.get<clang::NamedDecl *>();
 
-  // Enumerators are always stored within the enumeration, despite
-  // having the translation unit as their redeclaration context.
-  if (isa<clang::EnumConstantDecl>(decl)) return false;
+  // Enumerators have the translation unit as their redeclaration context,
+  // but members of anonymous enums are still allowed to be in the
+  // global-as-member category.
+  if (isa<clang::EnumConstantDecl>(decl)) {
+    const auto *theEnum = cast<clang::EnumDecl>(decl->getDeclContext());
+    return !theEnum->hasNameForLinkage();
+  }
 
   // If the redeclaration context is namespace-scope, then we're
   // mapping as a member.
@@ -467,8 +472,6 @@ bool SwiftLookupTable::addLocalEntry(SingleEntry newEntry,
 void SwiftLookupTable::addEntry(DeclName name, SingleEntry newEntry,
                                 EffectiveClangContext effectiveContext,
                                 const clang::Preprocessor *PP) {
-  assert(!Reader && "Cannot modify a lookup table stored on disk");
-
   // Translate the context.
   auto contextOpt = translateContext(effectiveContext);
   if (!contextOpt) {
@@ -483,6 +486,9 @@ void SwiftLookupTable::addEntry(DeclName name, SingleEntry newEntry,
 
     return;
   }
+
+  // Populate cache from reader if necessary.
+  findOrCreate(name.getBaseName().str());
 
   auto context = *contextOpt;
 
@@ -1539,8 +1545,11 @@ void importer::addEntryToLookupTable(SwiftLookupTable &table,
   }
 
   // If we have a name to import as, add this entry to the table.
-  if (auto importedName =
-          nameImporter.importName(named, ImportNameVersion::Swift3)) {
+  ImportNameVersion currentVersion =
+      nameVersionFromOptions(nameImporter.getLangOpts());
+  if (auto importedName = nameImporter.importName(named, currentVersion)) {
+    SmallPtrSet<DeclName, 8> distinctNames;
+    distinctNames.insert(importedName.getDeclName());
     table.addEntry(importedName.getDeclName(), named,
                    importedName.getEffectiveContext());
 
@@ -1551,14 +1560,19 @@ void importer::addEntryToLookupTable(SwiftLookupTable &table,
                               ArrayRef<Identifier>()),
                      named, importedName.getEffectiveContext());
 
-    // Import the Swift 2 name of this entity, and record it as well if it is
-    // different.
-    if (auto swift2Name =
-            nameImporter.importName(named, ImportNameVersion::Swift2)) {
-      if (swift2Name.getDeclName() != importedName.getDeclName())
-        table.addEntry(swift2Name.getDeclName(), named,
-                       swift2Name.getEffectiveContext());
-    }
+    forEachImportNameVersion([&] (ImportNameVersion alternateVersion) {
+      if (alternateVersion == currentVersion)
+        return;
+      auto alternateName = nameImporter.importName(named, alternateVersion);
+      if (!alternateName)
+        return;
+      // FIXME: What if the DeclNames are the same but the contexts are
+      // different?
+      if (distinctNames.insert(alternateName.getDeclName()).second) {
+        table.addEntry(alternateName.getDeclName(), named,
+                       alternateName.getEffectiveContext());
+      }
+    });
   } else if (auto category = dyn_cast<clang::ObjCCategoryDecl>(named)) {
     // If the category is invalid, don't add it.
     if (category->isInvalidDecl())
@@ -1688,15 +1702,23 @@ SwiftNameLookupExtension::createExtensionReader(
   assert(metadata.MajorVersion == SWIFT_LOOKUP_TABLE_VERSION_MAJOR);
   assert(metadata.MinorVersion == SWIFT_LOOKUP_TABLE_VERSION_MINOR);
 
-  // Check whether we already have an entry in the set of lookup tables.
-  auto &entry = lookupTables[mod.ModuleName];
-  if (entry) return nullptr;
+  std::function<void()> onRemove = [](){};
+  std::unique_ptr<SwiftLookupTable> *target = nullptr;
 
-  // Local function used to remove this entry when the reader goes away.
-  std::string moduleName = mod.ModuleName;
-  auto onRemove = [this, moduleName]() {
-    lookupTables.erase(moduleName);
-  };
+  if (mod.Kind == clang::serialization::MK_PCH) {
+    // PCH imports unconditionally overwrite the provided pchLookupTable.
+    target = &pchLookupTable;
+  } else {
+    // Check whether we already have an entry in the set of lookup tables.
+    target = &lookupTables[mod.ModuleName];
+    if (*target) return nullptr;
+
+    // Local function used to remove this entry when the reader goes away.
+    std::string moduleName = mod.ModuleName;
+    onRemove = [this, moduleName]() {
+      lookupTables.erase(moduleName);
+    };
+  }
 
   // Create the reader.
   auto tableReader = SwiftLookupTableReader::create(this, reader, mod, onRemove,
@@ -1704,7 +1726,7 @@ SwiftNameLookupExtension::createExtensionReader(
   if (!tableReader) return nullptr;
 
   // Create the lookup table.
-  entry.reset(new SwiftLookupTable(tableReader.get()));
+  target->reset(new SwiftLookupTable(tableReader.get()));
 
   // Return the new reader.
   return std::move(tableReader);

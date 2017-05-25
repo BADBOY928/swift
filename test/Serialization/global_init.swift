@@ -2,7 +2,7 @@
 // RUN: mkdir -p %t
 // RUN: %target-swift-frontend -emit-module -parse-as-library -sil-serialize-all -o %t %s
 // RUN: llvm-bcanalyzer %t/global_init.swiftmodule | %FileCheck %s -check-prefix=BCANALYZER
-// RUN: %target-sil-opt -enable-sil-verify-all %t/global_init.swiftmodule | %FileCheck %s
+// RUN: %target-sil-opt -enable-sil-verify-all -disable-sil-linking %t/global_init.swiftmodule | %FileCheck %s
 
 // BCANALYZER-NOT: UnknownCode
 
@@ -19,8 +19,8 @@ var MyVar = 3
 // CHECK: let MyConst: Int
 // CHECK: var MyVar: Int
 
-// CHECK-DAG: sil hidden [fragile] [global_init] @_TF11global_initau7MyConstSi : $@convention(thin) () -> Builtin.RawPointer
-// CHECK-DAG: sil hidden [fragile] [global_init] @_TF11global_initau5MyVarSi : $@convention(thin) () -> Builtin.RawPointer
+// CHECK-DAG: sil hidden [serialized] [global_init] @_T011global_init7MyConstSifau : $@convention(thin) () -> Builtin.RawPointer
+// CHECK-DAG: sil hidden [serialized] [global_init] @_T011global_init5MyVarSifau : $@convention(thin) () -> Builtin.RawPointer
 
 func getGlobals() -> Int {
   return MyVar + MyConst

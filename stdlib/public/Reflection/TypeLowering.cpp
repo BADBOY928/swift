@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -19,9 +19,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "swift/Reflection/TypeLowering.h"
-#include "swift/Basic/Unreachable.h"
 #include "swift/Reflection/TypeRef.h"
 #include "swift/Reflection/TypeRefBuilder.h"
+#include "swift/Runtime/Unreachable.h"
 
 #include <iostream>
 
@@ -186,7 +186,7 @@ public:
     }
     }
 
-    swift_unreachable("Bad TypeInfo kind");
+    swift_runtime_unreachable("Bad TypeInfo kind");
   }
 };
 
@@ -206,13 +206,19 @@ BuiltinTypeInfo::BuiltinTypeInfo(const BuiltinTypeDescriptor *descriptor)
 /// Utility class for building values that contain witness tables.
 class ExistentialTypeInfoBuilder {
   TypeConverter &TC;
-  ExistentialTypeRepresentation Representation;
   std::vector<const ProtocolTypeRef *> Protocols;
+  ExistentialTypeRepresentation Representation;
+  ReferenceCounting Refcounting;
   bool ObjC;
   unsigned WitnessTableCount;
   bool Invalid;
 
   bool isSingleError() const {
+    // If we changed representation, it means we added a
+    // superclass constraint or an AnyObject member.
+    if (Representation != ExistentialTypeRepresentation::Opaque)
+      return false;
+
     if (Protocols.size() != 1)
       return false;
 
@@ -231,13 +237,6 @@ class ExistentialTypeInfoBuilder {
     }
 
     for (auto *P : Protocols) {
-      // FIXME: AnyObject should go away
-      if (P->isAnyObject()) {
-        Representation = ExistentialTypeRepresentation::Class;
-        // No extra witness table for AnyObject
-        continue;
-      }
-
       const FieldDescriptor *FD = TC.getBuilder().getFieldTypeInfo(P);
       if (FD == nullptr) {
         DEBUG(std::cerr << "No field descriptor: "; P->dump())
@@ -271,15 +270,69 @@ class ExistentialTypeInfoBuilder {
 public:
   ExistentialTypeInfoBuilder(TypeConverter &TC)
     : TC(TC), Representation(ExistentialTypeRepresentation::Opaque),
-      ObjC(false), WitnessTableCount(0), Invalid(false) {}
+      Refcounting(ReferenceCounting::Unknown),
+      ObjC(false), WitnessTableCount(0),
+      Invalid(false) {}
 
-  void addProtocol(const TypeRef *TR) {
-    if (auto *P = dyn_cast<const ProtocolTypeRef>(TR)) {
-      Protocols.push_back(P);
-    } else {
-      DEBUG(std::cerr << "Not a protocol: "; TR->dump())
-      Invalid = true;
+  void addProtocol(const ProtocolTypeRef *P) {
+    Protocols.push_back(P);
+  }
+
+  void addProtocolComposition(const ProtocolCompositionTypeRef *PC) {
+    for (auto *T : PC->getMembers()) {
+      if (auto *P = dyn_cast<ProtocolTypeRef>(T)) {
+        addProtocol(P);
+        continue;
+      }
+
+      if (auto *PC = dyn_cast<ProtocolCompositionTypeRef>(T)) {
+        addProtocolComposition(PC);
+        continue;
+      }
+
+      // Anything else should either be a superclass constraint, or
+      // we have an invalid typeref.
+      if (!isa<NominalTypeRef>(T) &&
+          !isa<BoundGenericTypeRef>(T)) {
+        DEBUG(std::cerr << "Bad existential member: "; T->dump())
+        Invalid = true;
+        continue;
+      }
+      auto *FD = TC.getBuilder().getFieldTypeInfo(T);
+      if (FD == nullptr) {
+        DEBUG(std::cerr << "No field descriptor: "; T->dump())
+        Invalid = true;
+        continue;
+      }
+
+      // We have a valid superclass constraint. It only affects
+      // lowering by class-constraining the entire existential.
+      switch (FD->Kind) {
+      case FieldDescriptorKind::Class:
+        Refcounting = ReferenceCounting::Native;
+        LLVM_FALLTHROUGH;
+
+      case FieldDescriptorKind::ObjCClass:
+        addAnyObject();
+        break;
+
+      default:
+        DEBUG(std::cerr << "Bad existential member: "; T->dump())
+        Invalid = true;
+        continue;
+      }
     }
+
+    if (PC->hasExplicitAnyObject())
+      addAnyObject();
+  }
+
+  void addAnyObject() {
+    Representation = ExistentialTypeRepresentation::Class;
+  }
+
+  void markInvalid() {
+    Invalid = true;
   }
 
   const TypeInfo *build() {
@@ -295,7 +348,7 @@ public:
       }
 
       return TC.getReferenceTypeInfo(ReferenceKind::Strong,
-                                     ReferenceCounting::Unknown);
+                                     Refcounting);
     }
 
     RecordKind Kind;
@@ -317,7 +370,10 @@ public:
     case ExistentialTypeRepresentation::Class:
       // Class existentials consist of a single retainable pointer
       // followed by witness tables.
-      builder.addField("object", TC.getUnknownObjectTypeRef());
+      if (Refcounting == ReferenceCounting::Unknown)
+        builder.addField("object", TC.getUnknownObjectTypeRef());
+      else
+        builder.addField("object", TC.getNativeObjectTypeRef());
       break;
     case ExistentialTypeRepresentation::Opaque: {
       auto *TI = TC.getTypeInfo(TC.getRawPointerTypeRef());
@@ -559,7 +615,7 @@ const TypeRef *TypeConverter::getThinFunctionTypeRef() {
   if (ThinFunctionTR != nullptr)
     return ThinFunctionTR;
 
-  ThinFunctionTR = BuiltinTypeRef::create(Builder, "XfT_T_");
+  ThinFunctionTR = BuiltinTypeRef::create(Builder, "yyXf");
   return ThinFunctionTR;
 }
 
@@ -567,7 +623,7 @@ const TypeRef *TypeConverter::getAnyMetatypeTypeRef() {
   if (AnyMetatypeTR != nullptr)
     return AnyMetatypeTR;
 
-  AnyMetatypeTR = BuiltinTypeRef::create(Builder, "PMP_");
+  AnyMetatypeTR = BuiltinTypeRef::create(Builder, "ypXp");
   return AnyMetatypeTR;
 }
 
@@ -878,7 +934,13 @@ public:
     unsigned NoPayloadCases = 0;
     std::vector<FieldTypeInfo> PayloadCases;
 
-    for (auto Case : TC.getBuilder().getFieldTypeRefs(TR, FD)) {
+    std::vector<FieldTypeInfo> Fields;
+    if (!TC.getBuilder().getFieldTypeRefs(TR, FD, Fields)) {
+      Invalid = true;
+      return nullptr;
+    }
+
+    for (auto Case : Fields) {
       if (Case.TR == nullptr) {
         NoPayloadCases++;
         continue;
@@ -1024,7 +1086,12 @@ public:
       // Lower the struct's fields using substitutions from the
       // TypeRef to make field types concrete.
       RecordTypeInfoBuilder builder(TC, RecordKind::Struct);
-      for (auto Field : TC.getBuilder().getFieldTypeRefs(TR, FD))
+
+      std::vector<FieldTypeInfo> Fields;
+      if (!TC.getBuilder().getFieldTypeRefs(TR, FD, Fields))
+        return nullptr;
+
+      for (auto Field : Fields)
         builder.addField(Field.Name, Field.TR);
       return builder.build();
     }
@@ -1043,7 +1110,7 @@ public:
       return nullptr;
     }
 
-    swift_unreachable("Unhandled FieldDescriptorKind in switch.");
+    swift_runtime_unreachable("Unhandled FieldDescriptorKind in switch.");
   }
 
   const TypeInfo *visitNominalTypeRef(const NominalTypeRef *N) {
@@ -1074,7 +1141,7 @@ public:
       return TC.getTypeInfo(TC.getThinFunctionTypeRef());
     }
 
-    swift_unreachable("Unhandled FunctionMetadataConvention in switch.");
+    swift_runtime_unreachable("Unhandled FunctionMetadataConvention in switch.");
   }
 
   const TypeInfo *visitProtocolTypeRef(const ProtocolTypeRef *P) {
@@ -1086,8 +1153,7 @@ public:
   const TypeInfo *
   visitProtocolCompositionTypeRef(const ProtocolCompositionTypeRef *PC) {
     ExistentialTypeInfoBuilder builder(TC);
-    for (auto *P : PC->getProtocols())
-      builder.addProtocol(P);
+    builder.addProtocolComposition(PC);
     return builder.build();
   }
 
@@ -1102,7 +1168,7 @@ public:
       return TC.getTypeInfo(TC.getAnyMetatypeTypeRef());
     }
 
-    swift_unreachable("Unhandled MetatypeRepresentation in switch.");
+    swift_runtime_unreachable("Unhandled MetatypeRepresentation in switch.");
   }
 
   const TypeInfo *
@@ -1113,8 +1179,7 @@ public:
     if (auto *P = dyn_cast<ProtocolTypeRef>(TR)) {
       builder.addProtocol(P);
     } else if (auto *PC = dyn_cast<ProtocolCompositionTypeRef>(TR)) {
-      for (auto *P : PC->getProtocols())
-        builder.addProtocol(P);
+      builder.addProtocolComposition(PC);
     } else {
       DEBUG(std::cerr << "Invalid existential metatype: "; EM->dump());
       return nullptr;
@@ -1266,11 +1331,15 @@ const TypeInfo *TypeConverter::getClassInstanceTypeInfo(const TypeRef *TR,
     // TypeRef to make field types concrete.
     RecordTypeInfoBuilder builder(*this, RecordKind::ClassInstance);
 
+    std::vector<FieldTypeInfo> Fields;
+    if (!getBuilder().getFieldTypeRefs(TR, FD, Fields))
+      return nullptr;
+
     // Start layout from the given instance start offset. This should
     // be the superclass instance size.
     builder.addField(start, 1, /*numExtraInhabitants=*/0);
 
-    for (auto Field : getBuilder().getFieldTypeRefs(TR, FD))
+    for (auto Field : Fields)
       builder.addField(Field.Name, Field.TR);
     return builder.build();
   }
@@ -1285,7 +1354,7 @@ const TypeInfo *TypeConverter::getClassInstanceTypeInfo(const TypeRef *TR,
     return nullptr;
   }
 
-  swift_unreachable("Unhandled FieldDescriptorKind in switch.");
+  swift_runtime_unreachable("Unhandled FieldDescriptorKind in switch.");
 }
 
 } // namespace reflection

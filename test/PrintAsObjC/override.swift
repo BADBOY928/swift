@@ -23,6 +23,8 @@ import OverrideBase
 class A_Child : Base {
   // CHECK-NEXT: @property (nonatomic, readonly, getter=getProp) NSUInteger prop;
   override var prop: Int { return 0 }
+  // CHECK-NEXT: @property (nonatomic, readonly) NSInteger originalName;
+  override var renamedProp: Int { return 0 }
   // CHECK-NEXT: - (id _Nullable)objectAtIndexedSubscript:(NSUInteger)x SWIFT_WARN_UNUSED_RESULT;
   override subscript(x: Int) -> Any? { return nil }
 
@@ -34,10 +36,10 @@ class A_Child : Base {
   override func foo(_ x: Int, y: Int) -> Int { return x + y }
   
   
-  // CHECK-NEXT: - (BOOL)doThingAndReturnError:(NSError * _Nullable * _Null_unspecified)error;
+  // CHECK-NEXT: - (BOOL)doThingAndReturnError:(NSError * _Nullable * _Nullable)error;
   override func doThing() throws {}
 
-  // CHECK-NEXT: - (BOOL)doAnotherThingWithError:(NSError * _Nullable * _Null_unspecified)error;
+  // CHECK-NEXT: - (BOOL)doAnotherThingWithError:(NSError * _Nullable * _Nullable)error;
   override func doAnotherThing() throws {}
 
   // CHECK-NEXT: - (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;

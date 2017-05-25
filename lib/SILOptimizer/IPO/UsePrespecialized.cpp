@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -11,12 +11,10 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "use-prespecialized"
-#include "swift/Basic/Demangle.h"
 #include "swift/SILOptimizer/PassManager/Passes.h"
 #include "swift/SILOptimizer/PassManager/Transforms.h"
 #include "swift/SILOptimizer/Utils/Local.h"
 #include "swift/SILOptimizer/Utils/SpecializationMangler.h"
-#include "swift/SIL/Mangle.h"
 #include "swift/SIL/SILBuilder.h"
 #include "swift/SIL/SILInstruction.h"
 #include "swift/SIL/SILFunction.h"
@@ -54,10 +52,6 @@ class UsePrespecialized: public SILModuleTransform {
     }
   }
 
-  StringRef getName() override {
-    return "Use pre-specialized versions of functions";
-  }
-
   bool replaceByPrespecialized(SILFunction &F);
 };
 
@@ -84,42 +78,33 @@ bool UsePrespecialized::replaceByPrespecialized(SILFunction &F) {
     // available for it already and use this specialization
     // instead of the generic version.
 
-    ArrayRef<Substitution> Subs = AI.getSubstitutions();
+    SubstitutionList Subs = AI.getSubstitutions();
     if (Subs.empty())
       continue;
 
-    ReabstractionInfo ReInfo(ReferencedF, Subs);
-
-    auto SpecType = ReInfo.getSpecializedType();
-    if (!SpecType)
+    // Bail if any generic type parameters are unbound.
+    // TODO: Remove this limitation once public partial specializations
+    // are supported and can be provided by other modules.
+    if (hasArchetypes(Subs))
       continue;
 
+    ReabstractionInfo ReInfo(AI, ReferencedF, Subs);
+
+    if (!ReInfo.canBeSpecialized())
+      continue;
+
+    auto SpecType = ReInfo.getSpecializedType();
     // Bail if any generic types parameters of the concrete type
     // are unbound.
     if (SpecType->hasArchetype())
       continue;
 
-    // Bail if any generic types parameters of the concrete type
-    // are unbound.
-    if (hasUnboundGenericTypes(Subs))
-      continue;
-
     // Create a name of the specialization.
-    std::string ClonedName;
-    {
-      Mangle::Mangler Mangler;
-      GenericSpecializationMangler GenericMangler(Mangler, ReferencedF, Subs,
-                                                  ReferencedF->isFragile());
-      NewMangling::GenericSpecializationMangler NewGenericMangler(ReferencedF,
-                                              Subs, ReferencedF->isFragile(),
+    Mangle::GenericSpecializationMangler NewGenericMangler(ReferencedF,
+                                              Subs, ReferencedF->isSerialized(),
                                               /*isReAbstracted*/ true);
-      GenericMangler.mangle();
-      std::string Old = Mangler.finalize();
-      std::string New = NewGenericMangler.mangle();
-
-      ClonedName = NewMangling::selectMangling(Old, New);
-    }
-
+    std::string ClonedName = NewGenericMangler.mangle();
+      
     SILFunction *NewF = nullptr;
     // If we already have this specialization, reuse it.
     auto PrevF = M.lookUpFunction(ClonedName);

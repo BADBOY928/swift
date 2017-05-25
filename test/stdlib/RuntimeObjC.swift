@@ -374,6 +374,13 @@ Runtime.test("Generic class ObjC runtime names") {
   expectEqual("_TtGC1a12GenericClassPSo9NSCopyingS_9ProtocolAS_9ProtocolB__",
               NSStringFromClass(GenericClass<ProtocolB & NSCopying & ProtocolA>.self))
 
+  expectEqual("_TtGC1a12GenericClassXcCS_9SomeClassS_9ProtocolA__",
+              NSStringFromClass(GenericClass<ProtocolA & SomeClass>.self))
+  expectEqual("_TtGC1a12GenericClassPS_9ProtocolAs9AnyObject__",
+              NSStringFromClass(GenericClass<ProtocolA & AnyObject>.self))
+  expectEqual("_TtGC1a12GenericClassPs9AnyObject__",
+              NSStringFromClass(GenericClass<AnyObject>.self))
+
   expectEqual("_TtGC1a17MultiGenericClassGVS_13GenericStructSi_GOS_11GenericEnumGS2_Si___",
               NSStringFromClass(MultiGenericClass<GenericStruct<Int>,
                                                   GenericEnum<GenericEnum<Int>>>.self))
@@ -680,7 +687,7 @@ Reflection.test("MetatypeMirror") {
     expectEqual(expectedObjCProtocolConcrete, output)
 
     let compositionConcreteMetatype = (SomeNativeProto & SomeObjCProto).self
-    let expectedComposition = "- a.SomeObjCProto & a.SomeNativeProto #0\n"
+    let expectedComposition = "- a.SomeNativeProto & a.SomeObjCProto #0\n"
     output = ""
     dump(compositionConcreteMetatype, to: &output)
     expectEqual(expectedComposition, output)
@@ -812,11 +819,21 @@ var KVOHandle = 0
 
 Reflection.test("Name of metatype of artificial subclass") {
   let obj = TestArtificialSubclass()
+
+  expectEqual("\(type(of: obj))", "TestArtificialSubclass")
+  expectEqual(String(describing: type(of: obj)), "TestArtificialSubclass")
+  expectEqual(String(reflecting: type(of: obj)), "a.TestArtificialSubclass")
+
   // Trigger the creation of a KVO subclass for TestArtificialSubclass.
   obj.addObserver(obj, forKeyPath: "foo", options: [.new], context: &KVOHandle)
+  expectEqual("\(type(of: obj))", "TestArtificialSubclass")
+  expectEqual(String(describing: type(of: obj)), "TestArtificialSubclass")
+  expectEqual(String(reflecting: type(of: obj)), "a.TestArtificialSubclass")
   obj.removeObserver(obj, forKeyPath: "foo")
 
   expectEqual("\(type(of: obj))", "TestArtificialSubclass")
+  expectEqual(String(describing: type(of: obj)), "TestArtificialSubclass")
+  expectEqual(String(reflecting: type(of: obj)), "a.TestArtificialSubclass")
 }
 
 @objc class StringConvertibleInDebugAndOtherwise : NSObject {

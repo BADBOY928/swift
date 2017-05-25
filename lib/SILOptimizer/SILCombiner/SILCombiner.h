@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -180,6 +180,8 @@ public:
   /// Instruction visitors.
   SILInstruction *visitReleaseValueInst(ReleaseValueInst *DI);
   SILInstruction *visitRetainValueInst(RetainValueInst *CI);
+  SILInstruction *visitReleaseValueAddrInst(ReleaseValueAddrInst *DI);
+  SILInstruction *visitRetainValueAddrInst(RetainValueAddrInst *CI);
   SILInstruction *visitPartialApplyInst(PartialApplyInst *AI);
   SILInstruction *visitApplyInst(ApplyInst *AI);
   SILInstruction *visitTryApplyInst(TryApplyInst *AI);
@@ -190,6 +192,7 @@ public:
   SILInstruction *visitUpcastInst(UpcastInst *UCI);
   SILInstruction *visitLoadInst(LoadInst *LI);
   SILInstruction *visitAllocStackInst(AllocStackInst *AS);
+  SILInstruction *visitAllocRefInst(AllocRefInst *AR);
   SILInstruction *visitSwitchEnumAddrInst(SwitchEnumAddrInst *SEAI);
   SILInstruction *visitInjectEnumAddrInst(InjectEnumAddrInst *IEAI);
   SILInstruction *visitPointerToAddressInst(PointerToAddressInst *PTAI);
@@ -226,7 +229,6 @@ public:
   SILInstruction *visitAllocRefDynamicInst(AllocRefDynamicInst *ARDI);
   SILInstruction *visitEnumInst(EnumInst *EI);
   SILInstruction *visitConvertFunctionInst(ConvertFunctionInst *CFI);
-  SILInstruction *visitWitnessMethodInst(WitnessMethodInst *WMI);
 
   /// Instruction visitor helpers.
   SILInstruction *optimizeBuiltinCanBeObjCClass(BuiltinInst *AI);

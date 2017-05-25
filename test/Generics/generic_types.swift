@@ -167,6 +167,7 @@ func useRangeOfPrintables(_ roi : RangeOfPrintables<[Int]>) {
 
 var dfail : Dictionary<Int> // expected-error{{generic type 'Dictionary' specialized with too few type parameters (got 1, but expected 2)}}
 var notgeneric : Int<Float> // expected-error{{cannot specialize non-generic type 'Int'}}{{21-28=}}
+var notgenericNested : Array<Int<Float>> // expected-error{{cannot specialize non-generic type 'Int'}}{{33-40=}}
 
 // Make sure that redundant typealiases (that map to the same
 // underlying type) don't break protocol conformance or use.
@@ -240,3 +241,4 @@ struct UnsolvableInheritance2<T : U.A, U : T.A> {}
 // expected-error@-2 {{inheritance from non-protocol, non-class type 'T.A'}}
 
 enum X7<T> where X7.X : G { case X } // expected-error{{enum element 'X' is not a member type of 'X7<T>'}}
+// expected-error@-1{{use of undeclared type 'G'}}

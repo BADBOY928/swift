@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -13,6 +13,7 @@
 #ifndef SWIFT_AST_ANY_FUNCTION_REF_H
 #define SWIFT_AST_ANY_FUNCTION_REF_H
 
+#include "swift/Basic/Compiler.h"
 #include "swift/Basic/LLVM.h"
 #include "swift/AST/Decl.h"
 #include "swift/AST/Expr.h"
@@ -149,7 +150,12 @@ public:
     }
     llvm_unreachable("unexpected AnyFunctionRef representation");
   }
-  
+
+// Disable "only for use within the debugger" warning.
+#if SWIFT_COMPILER_IS_MSVC
+#pragma warning(push)
+#pragma warning(disable: 4996)
+#endif
   LLVM_ATTRIBUTE_DEPRECATED(void dump() const LLVM_ATTRIBUTE_USED,
                             "only for use within the debugger") {
     if (auto afd = TheFunction.dyn_cast<AbstractFunctionDecl *>()) {
@@ -170,7 +176,20 @@ public:
     }
     llvm_unreachable("unexpected AnyFunctionRef representation");
   }
+
+  GenericSignature *getGenericSignature() const {
+    if (auto afd = TheFunction.dyn_cast<AbstractFunctionDecl *>()) {
+      return afd->getGenericSignature();
+    }
+    if (auto ce = TheFunction.dyn_cast<AbstractClosureExpr *>()) {
+      return ce->getGenericSignatureOfContext();
+    }
+    llvm_unreachable("unexpected AnyFunctionRef representation");
+  }
 };
+#if SWIFT_COMPILER_IS_MSVC
+#pragma warning(pop)
+#endif
 
 } // namespace swift
 

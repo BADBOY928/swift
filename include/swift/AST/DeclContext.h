@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -312,6 +312,10 @@ public:
   /// of its parents.
   GenericEnvironment *getGenericEnvironmentOfContext() const;
 
+  /// Whether the context has a generic environment that will be constructed
+  /// on first access (but has not yet been constructed).
+  bool contextHasLazyGenericEnvironment() const;
+
   /// Map an interface type to a contextual type within this context.
   Type mapTypeIntoContext(Type type) const;
 
@@ -362,6 +366,9 @@ public:
   DeclContext *getParent() const {
     return ParentAndKind.getPointer();
   }
+
+  /// Returns the semantic parent for purposes of name lookup.
+  DeclContext *getParentForLookup() const;
 
   /// Return true if this is a child of the specified other decl context.
   bool isChildContextOf(const DeclContext *Other) const {

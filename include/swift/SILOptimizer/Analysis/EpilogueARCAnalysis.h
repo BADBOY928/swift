@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -161,7 +161,7 @@ public:
       return true;
     // Handle self-recursion. A self-recursion can be considered a +1 on the
     // current argument.
-    if (ApplyInst *AI = dyn_cast<ApplyInst>(II))
+    if (auto *AI = dyn_cast<ApplyInst>(II))
      if (AI->getCalleeFunction() == II->getParent()->getParent())
        return true;
     return false;
@@ -172,9 +172,7 @@ public:
   bool mayBlockEpilogueRelease(SILInstruction *II, SILValue Ptr) { 
     // Check whether this instruction read reference count, i.e. uniqueness
     // check. Moving release past that may result in additional COW.
-   if (II->mayReleaseOrReadRefCount())
-      return true;
-    return false;
+    return II->mayReleaseOrReadRefCount();
   } 
 
   /// Does this instruction block the interested ARC instruction ?
@@ -194,7 +192,7 @@ public:
     // We are checking for retain. If this is a self-recursion. call
     // to the function (which returns an owned value) can be treated as
     // the retain instruction.
-    if (ApplyInst *AI = dyn_cast<ApplyInst>(II))
+    if (auto *AI = dyn_cast<ApplyInst>(II))
      if (AI->getCalleeFunction() == II->getParent()->getParent())
        return true;
     // Check whether this is a retain instruction and the argument it

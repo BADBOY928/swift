@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -423,7 +423,7 @@ protected:
 /// store to the local's address. checkSafeArrayAddressUses will check that the
 /// store is a simple initialization outside the loop.
 bool COWArrayOpt::checkUniqueArrayContainer(SILValue ArrayContainer) {
-  if (SILArgument *Arg = dyn_cast<SILArgument>(ArrayContainer)) {
+  if (auto *Arg = dyn_cast<SILArgument>(ArrayContainer)) {
     // Check that the argument is passed as an inout type. This means there are
     // no aliases accessible within this function scope.
     auto Params = Function->getLoweredFunctionType()->getParameters();
@@ -486,9 +486,12 @@ static bool isNonMutatingArraySemanticCall(SILInstruction *Inst) {
     return true;
   case ArrayCallKind::kMakeMutable:
   case ArrayCallKind::kMutateUnknown:
+  case ArrayCallKind::kReserveCapacityForAppend:
   case ArrayCallKind::kWithUnsafeMutableBufferPointer:
   case ArrayCallKind::kArrayInit:
   case ArrayCallKind::kArrayUninitialized:
+  case ArrayCallKind::kAppendContentsOf:
+  case ArrayCallKind::kAppendElement:
     return false;
   }
 
@@ -822,9 +825,12 @@ static bool mayChangeArrayValueToNonUniqueState(ArraySemanticsCall &Call) {
 
   case ArrayCallKind::kNone:
   case ArrayCallKind::kMutateUnknown:
+  case ArrayCallKind::kReserveCapacityForAppend:
   case ArrayCallKind::kWithUnsafeMutableBufferPointer:
   case ArrayCallKind::kArrayInit:
   case ArrayCallKind::kArrayUninitialized:
+  case ArrayCallKind::kAppendContentsOf:
+  case ArrayCallKind::kAppendElement:
     return true;
   }
 
@@ -1256,7 +1262,7 @@ bool COWArrayOpt::hoistInLoopWithOnlyNonArrayValueMutatingOperations() {
       }
       // A store is only safe if it is to an array element and the element type
       // is trivial.
-      if (StoreInst *SI = dyn_cast<StoreInst>(Inst)) {
+      if (auto *SI = dyn_cast<StoreInst>(Inst)) {
         if (!isArrayEltStore(SI) ||
             !SI->getSrc()->getType().isTrivial(Module)) {
           DEBUG(llvm::dbgs()
@@ -1379,15 +1385,11 @@ bool COWArrayOpt::hasLoopOnlyDestructorSafeArrayOperations() {
         // Checking
         // that all types are the same make guarantees that this cannot happen.
         if (SameTy.isNull()) {
-          SameTy =
-              Sem.getSelf()->getType().getSwiftRValueType()->getCanonicalType();
+          SameTy = Sem.getSelf()->getType().getSwiftRValueType();
           continue;
         }
         
-        if (Sem.getSelf()
-                       ->getType()
-                       .getSwiftRValueType()
-                       ->getCanonicalType() != SameTy) {
+        if (Sem.getSelf()->getType().getSwiftRValueType() != SameTy) {
           DEBUG(llvm::dbgs() << "    (NO) mismatching array types\n");
           return ReturnWithCleanup(false);
         }
@@ -1602,7 +1604,6 @@ class COWArrayOptPass : public SILFunctionTransform {
       }
   }
 
-  StringRef getName() override { return "SIL COW Array Optimization"; }
 };
 } // end anonymous namespace
 
@@ -1828,7 +1829,8 @@ private:
         if (FunctionArgs[ArgIdx] != Arg)
           continue;
 
-        if (!Params[ArgIdx].isIndirectInOut() && Params[ArgIdx].isIndirect()) {
+        if (!Params[ArgIdx].isIndirectInOut()
+            && Params[ArgIdx].isFormalIndirect()) {
           DEBUG(llvm::dbgs()
                 << "    Skipping Array: Not an inout or by val argument!\n");
           return false;
@@ -1862,15 +1864,8 @@ private:
   }
 
   bool isClassElementTypeArray(SILValue Arr) {
-    auto Ty = Arr->getType().getSwiftRValueType();
-    auto *Struct = Ty->getStructOrBoundGenericStruct();
-    assert(Struct && "Array must be a struct !?");
-    if (Struct) {
-      // No point in hoisting generic code.
-      auto BGT = dyn_cast<BoundGenericType>(Ty);
-      if (!BGT)
-        return false;
-
+    auto Ty = Arr->getType();
+    if (auto BGT = Ty.getAs<BoundGenericStructType>()) {
       // Check the array element type parameter.
       bool isClass = false;
       for (auto EltTy : BGT->getGenericArgs()) {
@@ -1975,8 +1970,8 @@ public:
 
     // Clone the arguments.
     for (auto &Arg : StartBB->getArguments()) {
-      SILValue MappedArg =
-          ClonedStartBB->createPHIArgument(getOpType(Arg->getType()));
+      SILValue MappedArg = ClonedStartBB->createPHIArgument(
+          getOpType(Arg->getType()), ValueOwnershipKind::Owned);
       ValueMap.insert(std::make_pair(Arg, MappedArg));
     }
 
@@ -2140,9 +2135,8 @@ static SILValue createStructExtract(SILBuilder &B, SILLocation Loc,
 
 static Identifier getBinaryFunction(StringRef Name, SILType IntSILTy,
                                     ASTContext &C) {
-  CanType IntTy = IntSILTy.getSwiftRValueType();
-  unsigned NumBits =
-      cast<BuiltinIntegerType>(IntTy)->getWidth().getFixedWidth();
+  auto IntTy = IntSILTy.castTo<BuiltinIntegerType>();
+  unsigned NumBits = IntTy->getWidth().getFixedWidth();
   // Name is something like: add_Int64
   std::string NameStr = Name;
   NameStr += "_Int" + llvm::utostr(NumBits);
@@ -2353,7 +2347,6 @@ class SwiftArrayOptPass : public SILFunctionTransform {
     }
   }
 
-  StringRef getName() override { return "SIL Swift Array Optimization"; }
 };
 } // end anonymous namespace
 

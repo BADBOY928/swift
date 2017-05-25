@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -119,7 +119,7 @@ static bool tryLoadLibrary(LinkLibrary linkLib,
     // Try user-provided framework search paths first; frameworks contain
     // binaries as well as modules.
     for (auto &frameworkDir : searchPathOpts.FrameworkSearchPaths) {
-      path = frameworkDir;
+      path = frameworkDir.Path;
       llvm::sys::path::append(path, frameworkPart.str());
       success = loadRuntimeLib(path);
       if (success)
@@ -207,11 +207,11 @@ bool swift::immediate::linkLLVMModules(llvm::Module *Module,
 bool swift::immediate::IRGenImportedModules(
     CompilerInstance &CI,
     llvm::Module &Module,
-    llvm::SmallPtrSet<swift::Module *, 8> &ImportedModules,
+    llvm::SmallPtrSet<swift::ModuleDecl *, 8> &ImportedModules,
     SmallVectorImpl<llvm::Function*> &InitFns,
     IRGenOptions &IRGenOpts,
     const SILOptions &SILOpts) {
-  swift::Module *M = CI.getMainModule();
+  swift::ModuleDecl *M = CI.getMainModule();
 
   // Perform autolinking.
   SmallVector<LinkLibrary, 4> AllLinkLibraries(IRGenOpts.LinkLibraries);
@@ -220,14 +220,14 @@ bool swift::immediate::IRGenImportedModules(
   };
 
   M->forAllVisibleModules({}, /*includePrivateTopLevelImports=*/true,
-                          [&](Module::ImportedModule import) {
+                          [&](ModuleDecl::ImportedModule import) {
     import.second->collectLinkLibraries(addLinkLibrary);
   });
 
   // Hack to handle thunks eagerly synthesized by the Clang importer.
-  swift::Module *prev = nullptr;
+  swift::ModuleDecl *prev = nullptr;
   for (auto external : CI.getASTContext().ExternalDefinitions) {
-    swift::Module *next = external->getModuleContext();
+    swift::ModuleDecl *next = external->getModuleContext();
     if (next == prev)
       continue;
     next->collectLinkLibraries(addLinkLibrary);
@@ -248,7 +248,7 @@ bool swift::immediate::IRGenImportedModules(
   // expensive, because it's not properly being limited to new things right now.
   bool hadError = false;
   for (auto &entry : CI.getASTContext().LoadedModules) {
-    swift::Module *import = entry.second;
+    swift::ModuleDecl *import = entry.second;
     if (!ImportedModules.insert(import).second)
       continue;
 
@@ -259,6 +259,7 @@ bool swift::immediate::IRGenImportedModules(
       hadError = true;
       break;
     }
+    runSILLoweringPasses(*SILMod);
 
     // FIXME: We shouldn't need to use the global context here, but
     // something is persisting across calls to performIRGeneration.
@@ -345,7 +346,7 @@ int swift::RunImmediately(CompilerInstance &CI, const ProcessCmdLine &CmdLine,
   (*emplaceProcessArgs)(argBuf.data(), CmdLine.size());
 
   SmallVector<llvm::Function*, 8> InitFns;
-  llvm::SmallPtrSet<swift::Module *, 8> ImportedModules;
+  llvm::SmallPtrSet<swift::ModuleDecl *, 8> ImportedModules;
   if (IRGenImportedModules(CI, *Module, ImportedModules, InitFns,
                            IRGenOpts, SILOpts))
     return -1;

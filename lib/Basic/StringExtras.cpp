@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -14,7 +14,7 @@
 // names.
 //
 //===----------------------------------------------------------------------===//
-#include "swift/Basic/Fallthrough.h"
+
 #include "swift/Basic/StringExtras.h"
 #include "clang/Basic/CharInfo.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -22,6 +22,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/Compiler.h"
 #include <algorithm>
 
 using namespace swift;
@@ -781,7 +782,7 @@ static StringRef omitNeedlessWords(StringRef name,
           break;
         }
 
-        SWIFT_FALLTHROUGH;
+        LLVM_FALLTHROUGH;
 
       case PartOfSpeech::Verb:
       case PartOfSpeech::Gerund:

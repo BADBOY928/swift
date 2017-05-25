@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -20,6 +20,7 @@
 #include "swift/AST/DiagnosticsFrontend.h"
 #include "swift/AST/Expr.h"
 #include "swift/AST/NameLookup.h"
+#include "swift/AST/ParameterList.h"
 #include "swift/AST/Stmt.h"
 #include "swift/Parse/LocalContext.h"
 #include "llvm/ADT/SmallString.h"
@@ -310,9 +311,9 @@ void REPLChecker::processREPLTopLevelExpr(Expr *E) {
 
   // Create the meta-variable, let the typechecker name it.
   Identifier name = TC.getNextResponseVariableName(SF.getParentModule());
-  VarDecl *vd = new (Context) VarDecl(/*static*/ false, /*IsLet*/true,
-                                      E->getStartLoc(), name,
-                                      E->getType(), &SF);
+  VarDecl *vd = new (Context) VarDecl(/*IsStatic*/false, /*IsLet*/true,
+                                      /*IsCaptureList*/false, E->getStartLoc(),
+                                      name, E->getType(), &SF);
   vd->setInterfaceType(E->getType());
   SF.Decls.push_back(vd);
 
@@ -383,12 +384,12 @@ void REPLChecker::processREPLTopLevelPatternBinding(PatternBindingDecl *PBD) {
 
     // Create the meta-variable, let the typechecker name it.
     Identifier name = TC.getNextResponseVariableName(SF.getParentModule());
-    VarDecl *vd = new (Context) VarDecl(/*static*/ false, /*IsLet*/true,
+    VarDecl *vd = new (Context) VarDecl(/*IsStatic*/false, /*IsLet*/true,
+                                        /*IsCaptureList*/false,
                                         PBD->getStartLoc(), name,
                                         pattern->getType(), &SF);
     vd->setInterfaceType(pattern->getType());
     SF.Decls.push_back(vd);
-    
 
     // Create a PatternBindingDecl to bind the expression into the decl.
     Pattern *metavarPat = new (Context) NamedPattern(vd);
@@ -439,17 +440,17 @@ void TypeChecker::processREPLTopLevel(SourceFile &SF, TopLevelContext &TLC,
   for (Decl *D : NewDecls) {
     SF.Decls.push_back(D);
 
-    TopLevelCodeDecl *TLCD = dyn_cast<TopLevelCodeDecl>(D);
+    auto *TLCD = dyn_cast<TopLevelCodeDecl>(D);
     if (!TLCD || TLCD->getBody()->getElements().empty())
       continue;
 
     auto Entry = TLCD->getBody()->getElement(0);
 
     // Check to see if the TLCD has an expression that we have to transform.
-    if (Expr *E = Entry.dyn_cast<Expr*>())
+    if (auto *E = Entry.dyn_cast<Expr*>())
       RC.processREPLTopLevelExpr(E);
-    else if (Decl *D = Entry.dyn_cast<Decl*>())
-      if (PatternBindingDecl *PBD = dyn_cast<PatternBindingDecl>(D))
+    else if (auto *D = Entry.dyn_cast<Decl*>())
+      if (auto *PBD = dyn_cast<PatternBindingDecl>(D))
         RC.processREPLTopLevelPatternBinding(PBD);
   }
 

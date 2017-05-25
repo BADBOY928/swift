@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -100,9 +100,6 @@ private:
   /// A map from local DeclContexts to their serialized IDs.
   llvm::DenseMap<const DeclContext*, DeclContextID> LocalDeclContextIDs;
 
-  /// A map from generic parameter lists to the decls they come from.
-  llvm::DenseMap<const GenericParamList *, const Decl *> GenericContexts;
-
   /// A map from generic environments to their serialized IDs.
   llvm::DenseMap<const GenericEnvironment *, GenericEnvironmentID>
     GenericEnvironmentIDs;
@@ -120,15 +117,21 @@ public:
   /// table.
   using DeclTable = llvm::MapVector<Identifier, DeclTableData>;
 
-  /// Returns the declaration the given generic parameter list is associated
-  /// with.
-  const Decl *getGenericContext(const GenericParamList *paramList);
-
-  using ObjCMethodTableData = SmallVector<std::tuple<TypeID, bool, DeclID>, 4>;
+  using ObjCMethodTableData =
+    SmallVector<std::tuple<std::string, bool, DeclID>, 4>;
 
   // In-memory representation of what will eventually be an on-disk
   // hash table of all defined Objective-C methods.
-  using ObjCMethodTable = llvm::DenseMap<ObjCSelector, ObjCMethodTableData>;
+  using ObjCMethodTable = llvm::MapVector<ObjCSelector, ObjCMethodTableData>;
+
+  using NestedTypeDeclsData = SmallVector<std::pair<DeclID, DeclID>, 4>;
+  // In-memory representation of what will eventually be an on-disk
+  // hash table of all defined Objective-C methods.
+  using NestedTypeDeclsTable = llvm::MapVector<Identifier, NestedTypeDeclsData>;
+
+  using ExtensionTableData =
+      SmallVector<std::pair<const NominalTypeDecl *, DeclID>, 4>;
+  using ExtensionTable = llvm::MapVector<Identifier, ExtensionTableData>;
 
 private:
   /// A map from identifiers to methods and properties with the given name.
@@ -276,10 +279,6 @@ private:
   /// Writes a generic parameter list.
   bool writeGenericParams(const GenericParamList *genericParams);
 
-  /// Writes a set of generic requirements.
-  void writeGenericRequirements(ArrayRef<Requirement> requirements,
-                                const std::array<unsigned, 256> &abbrCodes);
-
   /// Writes a list of protocol conformances.
   void writeConformances(ArrayRef<ProtocolConformanceRef> conformances,
                          const std::array<unsigned, 256> &abbrCodes);
@@ -338,6 +337,9 @@ private:
   /// Writes the given type.
   void writeType(Type ty);
 
+  /// Writes a generic environment.
+  void writeGenericEnvironment(const GenericEnvironment *env);
+
   /// Registers the abbreviation for the given decl or type layout.
   template <typename Layout>
   void registerDeclTypeAbbr() {
@@ -367,7 +369,7 @@ private:
   void writeSIL(const SILModule *M, bool serializeAllSIL);
 
   /// Top-level entry point for serializing a module.
-  void writeAST(ModuleOrSourceFile DC);
+  void writeAST(ModuleOrSourceFile DC, bool enableNestedTypeLookupTable);
 
   void writeToStream(raw_ostream &os);
 
@@ -403,7 +405,8 @@ public:
   /// The Decl will be scheduled for serialization if necessary.
   ///
   /// \returns The ID for the given Decl in this module.
-  DeclID addDeclRef(const Decl *D, bool forceSerialization = false);
+  DeclID addDeclRef(const Decl *D, bool forceSerialization = false,
+                    bool allowTypeAliasXRef = false);
 
   /// Records the use of the given DeclContext.
   ///
@@ -447,7 +450,7 @@ public:
   /// the archetypes within the substitutions. The replacement types within
   /// the substitution will be mapped out of the generic environment before
   /// being written.
-  void writeSubstitutions(ArrayRef<Substitution> substitutions,
+  void writeSubstitutions(SubstitutionList substitutions,
                           const std::array<unsigned, 256> &abbrCodes,
                           GenericEnvironment *genericEnv = nullptr);
 
@@ -472,10 +475,9 @@ public:
                         const std::array<unsigned, 256> &abbrCodes,
                         GenericEnvironment *genericEnv = nullptr);
 
-  /// Writes a generic environment.
-  void writeGenericEnvironment(const GenericEnvironment *env,
-                               const std::array<unsigned, 256> &abbrCodes,
-                               bool SILMode);
+  /// Writes a set of generic requirements.
+  void writeGenericRequirements(ArrayRef<Requirement> requirements,
+                                const std::array<unsigned, 256> &abbrCodes);
 };
 } // end namespace serialization
 } // end namespace swift

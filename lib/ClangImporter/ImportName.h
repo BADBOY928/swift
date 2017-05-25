@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -24,9 +24,6 @@
 #include "swift/AST/Decl.h"
 #include "swift/AST/ForeignErrorConvention.h"
 #include "clang/Sema/Sema.h"
-
-// TODO: remove when we drop import name options
-#include "clang/AST/Decl.h"
 
 namespace swift {
 namespace importer {
@@ -55,11 +52,65 @@ enum class ImportNameVersion : unsigned {
 
   /// Names as they appeared in Swift 4 family
   Swift4,
-};
-enum { NumImportNameVersions = 4 };
 
-/// Map a language version into an import name version
+  /// A placeholder for the latest version, to be used in loops and such.
+  LAST_VERSION = Swift4,
+
+  /// The version which should be used for importing types, which need to have
+  /// one canonical definition.
+  ///
+  /// FIXME: Is this supposed to be the /newest/ version, or a canonical
+  /// version that lasts forever as part of the ABI?
+  ForTypes = Swift4
+};
+
+static inline ImportNameVersion &operator++(ImportNameVersion &value) {
+  assert(value != ImportNameVersion::LAST_VERSION);
+  value = static_cast<ImportNameVersion>(static_cast<unsigned>(value) + 1);
+  return value;
+}
+
+static inline ImportNameVersion &operator--(ImportNameVersion &value) {
+  assert(value != ImportNameVersion::Raw);
+  value = static_cast<ImportNameVersion>(static_cast<unsigned>(value) - 1);
+  return value;
+}
+
+/// Calls \p action for each name version, starting with \p current, then going
+/// backwards until ImportNameVersion::Raw, and then finally going forwards to
+/// ImportNameVersion::LAST_VERSION.
+///
+/// This is the most useful order for importing compatibility stubs.
+static inline void forEachImportNameVersionFromCurrent(
+    ImportNameVersion current,
+    llvm::function_ref<void(ImportNameVersion)> action) {
+  action(current);
+  ImportNameVersion nameVersion = current;
+  while (nameVersion != ImportNameVersion::Raw) {
+    --nameVersion;
+    action(nameVersion);
+  }
+  nameVersion = current;
+  while (nameVersion != ImportNameVersion::LAST_VERSION) {
+    ++nameVersion;
+    action(nameVersion);
+  }
+}
+
+/// Calls \p action for each name version, starting with ImportNameVersion::Raw
+/// and going forwards.
+static inline void
+forEachImportNameVersion(llvm::function_ref<void(ImportNameVersion)> action) {
+  auto limit = static_cast<unsigned>(ImportNameVersion::LAST_VERSION);
+  for (unsigned raw = 0; raw <= limit; ++raw)
+    action(static_cast<ImportNameVersion>(raw));
+}
+
+/// Map a language version into an import name version.
 ImportNameVersion nameVersionFromOptions(const LangOptions &langOpts);
+
+/// Map an import name version into a language version.
+unsigned majorVersionNumberForNameVersion(ImportNameVersion version);
 
 /// Describes a name that was imported from Clang.
 class ImportedName {
@@ -212,7 +263,7 @@ public:
     case ImportedAccessorKind::SubscriptSetter:
       return true;
     }
-    
+
     llvm_unreachable("Invalid ImportedAccessorKind.");
   }
 };
@@ -220,6 +271,11 @@ public:
 /// Strips a trailing "Notification", if present. Returns {} if name doesn't end
 /// in "Notification", or it there would be nothing left.
 StringRef stripNotification(StringRef name);
+
+/// Find the swift_name attribute associated with this declaration, if any,
+/// appropriate for \p version.
+const clang::SwiftNameAttr *findSwiftNameAttr(const clang::Decl *decl,
+                                              ImportNameVersion version);
 
 /// Class to determine the Swift name of foreign entities. Currently fairly
 /// stateless and borrows from the ClangImporter::Implementation, but in the
@@ -250,7 +306,9 @@ public:
 
   /// Determine the Swift name for a Clang decl
   ImportedName importName(const clang::NamedDecl *decl,
-                          ImportNameVersion version);
+                          ImportNameVersion version,
+                          clang::DeclarationName preferredName =
+                            clang::DeclarationName());
 
   /// Imports the name of the given Clang macro into Swift.
   Identifier importMacroName(const clang::IdentifierInfo *clangIdentifier,
@@ -305,15 +363,13 @@ private:
                       ArrayRef<const clang::ParmVarDecl *> params,
                       bool isInitializer, bool hasCustomName);
 
-  /// Whether we should import this as Swift Private
-  bool shouldBeSwiftPrivate(const clang::NamedDecl *, clang::Sema &clangSema);
-
   EffectiveClangContext determineEffectiveContext(const clang::NamedDecl *,
                                                   const clang::DeclContext *,
                                                   ImportNameVersion version);
 
   ImportedName importNameImpl(const clang::NamedDecl *,
-                              ImportNameVersion version);
+                              ImportNameVersion version,
+                              clang::DeclarationName);
 };
 
 }

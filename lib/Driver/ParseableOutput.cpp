@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -109,7 +109,7 @@ public:
     wrapper.flush();
 
     for (const Action *A : Cmd.getSource().getInputs()) {
-      if (const InputAction *IA = dyn_cast<InputAction>(A))
+      if (const auto *IA = dyn_cast<InputAction>(A))
         Inputs.push_back(CommandInput(IA->getInputArg().getValue()));
     }
 
@@ -201,15 +201,17 @@ public:
 
 class SignalledMessage : public TaskOutputMessage {
   std::string ErrorMsg;
+  Optional<int> Signal;
 public:
   SignalledMessage(const Job &Cmd, ProcessId Pid, StringRef Output,
-                   StringRef ErrorMsg) : TaskOutputMessage("signalled", Cmd,
-                                                           Pid, Output),
-                                         ErrorMsg(ErrorMsg) {}
+                   StringRef ErrorMsg, Optional<int> Signal) :
+      TaskOutputMessage("signalled", Cmd, Pid, Output), ErrorMsg(ErrorMsg),
+      Signal(Signal) {}
 
   void provideMapping(swift::json::Output &out) override {
     TaskOutputMessage::provideMapping(out);
     out.mapOptional("error-message", ErrorMsg, std::string());
+    out.mapOptional("signal", Signal);
   }
 };
 
@@ -260,8 +262,9 @@ void parseable_output::emitFinishedMessage(raw_ostream &os,
 void parseable_output::emitSignalledMessage(raw_ostream &os,
                                             const Job &Cmd, ProcessId Pid,
                                             StringRef ErrorMsg,
-                                            StringRef Output) {
-  SignalledMessage msg(Cmd, Pid, Output, ErrorMsg);
+                                            StringRef Output,
+                                            Optional<int> Signal) {
+  SignalledMessage msg(Cmd, Pid, Output, ErrorMsg, Signal);
   emitMessage(os, msg);
 }
 

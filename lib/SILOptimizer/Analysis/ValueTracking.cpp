@@ -2,7 +2,7 @@
 //
 // This source file is part of the Swift.org open source project
 //
-// Copyright (c) 2014 - 2016 Apple Inc. and the Swift project authors
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
 // Licensed under Apache License v2.0 with Runtime Library Exception
 //
 // See https://swift.org/LICENSE.txt for license information
@@ -148,7 +148,7 @@ IsZeroKind swift::isZeroValue(SILValue Value) {
     if (T->getFieldNo() != 0)
       return IsZeroKind::Unknown;
 
-    BuiltinInst *BI = dyn_cast<BuiltinInst>(T->getOperand());
+    auto *BI = dyn_cast<BuiltinInst>(T->getOperand());
     if (!BI)
       return IsZeroKind::Unknown;
 
